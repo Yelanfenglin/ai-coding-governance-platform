@@ -21,7 +21,7 @@ import statistics
 from dataclasses import dataclass, field
 
 from .models import BBox, VectorRule
-from .native_pdf import NativeLine, NativePage, NativeSpan
+from .native_pdf import NativeChar, NativeLine, NativePage, NativeSpan
 
 # 横/竖线聚类的判定：同一条边界线的微小抖动容差
 _GAP = 4.0
@@ -494,11 +494,15 @@ def _reconstruct_grid(
 
     # atomic text：先按原子 cell 分配（不依赖 merge）
     atomic = [["" for _ in range(n_cols)] for _ in range(n_rows)]
+    origin_by_slot = _origin_by_atomic_slot(table_cells.values())
     for span in _iter_spans(native, roi):
-        ci, cj = _bin(span.bbox.cy, hy), _bin(span.bbox.cx, vx)
-        if ci is None or cj is None:
-            continue
-        atomic[ci][cj] = (atomic[ci][cj] + " " + span.text).strip()
+        for row, col, text in _span_atomic_fragments(
+            span,
+            hy,
+            vx,
+            origin_by_slot,
+        ):
+            atomic[row][col] = (atomic[row][col] + " " + text).strip()
 
     for cell in table_cells.values():
         cell.text = _atomic_region_text(cell, atomic)
@@ -728,9 +732,9 @@ def _annotate_physical_cell_lines(table: Table, native: NativePage) -> None:
         fragments: list[_LineFragment] = []
         for line in native.lines:
             selected = tuple(
-                span
+                fragment
                 for span in line.spans
-                if span.text.strip() and _span_centered_in(span, cell.bbox)
+                if (fragment := _span_fragment_in_bbox(span, cell.bbox)) is not None
             )
             if not selected:
                 continue
@@ -900,11 +904,124 @@ def _spans_bbox(spans: tuple[NativeSpan, ...]) -> BBox:
     )
 
 
+def _origin_by_atomic_slot(cells) -> dict[tuple[int, int], tuple[int, int]]:
+    origins: dict[tuple[int, int], tuple[int, int]] = {}
+    for cell in cells:
+        for row in range(cell.row, cell.row + cell.rowspan):
+            for col in range(cell.col, cell.col + cell.colspan):
+                origins[(row, col)] = (cell.row, cell.col)
+    return origins
+
+
+def _span_atomic_fragments(
+    span: NativeSpan,
+    row_edges: list[float],
+    column_edges: list[float],
+    origin_by_slot: dict[tuple[int, int], tuple[int, int]],
+) -> list[tuple[int, int, str]]:
+    """Split a span only when positioned characters cross real cell origins.
+
+    PDF generators occasionally emit several visual cells as one text span.
+    Whole-span center ownership then collapses every label into one cell.  A
+    true colspan/rowspan has the same origin for all covered atomic slots and
+    deliberately remains untouched here.
+    """
+    fallback_row = _bin(span.bbox.cy, row_edges)
+    fallback_col = _bin(span.bbox.cx, column_edges)
+    fallback = (
+        [(fallback_row, fallback_col, span.text)]
+        if fallback_row is not None and fallback_col is not None
+        else []
+    )
+    if not span.characters:
+        return fallback
+
+    grouped: dict[tuple[int, int], list[NativeChar]] = {}
+    for character in span.characters:
+        row = _strict_bin(character.bbox.cy, row_edges)
+        col = _strict_bin(character.bbox.cx, column_edges)
+        if row is None or col is None:
+            continue
+        grouped.setdefault((row, col), []).append(character)
+    visible_groups = {
+        slot: characters
+        for slot, characters in grouped.items()
+        if any(character.text.strip() for character in characters)
+    }
+    origins = {origin_by_slot[slot] for slot in visible_groups if slot in origin_by_slot}
+    if len(origins) < 2:
+        return fallback
+
+    fragments: list[tuple[int, int, str]] = []
+    for (row, col), characters in sorted(visible_groups.items()):
+        text = "".join(character.text for character in characters).strip()
+        if text:
+            fragments.append((row, col, text))
+    return fragments or fallback
+
+
+def _span_fragment_in_bbox(span: NativeSpan, bbox: BBox) -> NativeSpan | None:
+    if not span.text.strip():
+        return None
+    if _bbox_inside(span.bbox, bbox):
+        return span
+    if not span.characters:
+        return span if _span_centered_in(span, bbox) else None
+    characters = [
+        character
+        for character in span.characters
+        if bbox.x0 - 1.0 <= character.bbox.cx <= bbox.x1 + 1.0
+        and bbox.y0 - 1.0 <= character.bbox.cy <= bbox.y1 + 1.0
+    ]
+    text = "".join(character.text for character in characters).strip()
+    visible = [character for character in characters if character.text.strip()]
+    if not text or not visible:
+        return None
+    return NativeSpan(
+        text=text,
+        bbox=BBox(
+            min(character.bbox.x0 for character in visible),
+            min(character.bbox.y0 for character in visible),
+            max(character.bbox.x1 for character in visible),
+            max(character.bbox.y1 for character in visible),
+        ),
+        font=span.font,
+        size=span.size,
+        flags=span.flags,
+        block_id=span.block_id,
+        line_id=span.line_id,
+        span_id=span.span_id,
+        characters=characters,
+    )
+
+
+def _bbox_inside(inner: BBox, outer: BBox, margin: float = 1.0) -> bool:
+    return (
+        inner.x0 >= outer.x0 - margin
+        and inner.x1 <= outer.x1 + margin
+        and inner.y0 >= outer.y0 - margin
+        and inner.y1 <= outer.y1 + margin
+    )
+
+
 def _span_centered_in(span: NativeSpan, bbox: BBox, margin: float = 1.0) -> bool:
     return (
         bbox.x0 - margin <= span.bbox.cx <= bbox.x1 + margin
         and bbox.y0 - margin <= span.bbox.cy <= bbox.y1 + margin
     )
+
+
+def _strict_bin(value: float, edges: list[float], margin: float = 1.0) -> int | None:
+    if len(edges) < 2 or value < edges[0] - margin or value > edges[-1] + margin:
+        return None
+    if value <= edges[0]:
+        return 0
+    if value >= edges[-1]:
+        return len(edges) - 2
+    for index, (left, right) in enumerate(zip(edges, edges[1:], strict=False)):
+        if left <= value < right:
+            return index
+    return None
 
 
 def _iter_spans(native: NativePage, roi: BBox):

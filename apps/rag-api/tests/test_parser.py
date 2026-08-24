@@ -13,7 +13,7 @@ from app.parser.anchor import Anchor
 from app.parser.cross_page import stitch_cross_page_tables
 from app.parser.document import SectionTracker, link_table_continuations
 from app.parser.models import BBox, NativeDrawing, VectorRule
-from app.parser.native_pdf import NativeLine, NativePage, NativeSpan, _extract_rules
+from app.parser.native_pdf import NativeChar, NativeLine, NativePage, NativeSpan, _extract_rules
 from app.parser.native_tables import recover_missing_tables
 from app.parser.page import (
     PageIR,
@@ -350,6 +350,76 @@ def test_table_uses_roi_only_for_missing_outer_vertical_edges() -> None:
     assert table is not None and table.valid
     assert (table.n_rows, table.n_cols) == (3, 3)
     assert table.text_rows()[0] == ["r0c0", "r0c1", "r0c2"]
+
+
+def test_one_native_span_is_distributed_across_distinct_cells_by_character_position() -> None:
+    rules = [_h(y) for y in (0.0, 20.0, 40.0, 60.0)] + [_v(x) for x in (0.0, 30.0, 60.0, 90.0)]
+    native = _native_grid_page(
+        rules,
+        [["", "", ""], ["a", "1", "x"], ["b", "2", "y"]],
+    )
+    characters = [
+        NativeChar("L", BBox(5.0, 5.0, 9.0, 13.0)),
+        NativeChar("0", BBox(9.0, 5.0, 13.0, 13.0)),
+        NativeChar("L", BBox(35.0, 5.0, 39.0, 13.0)),
+        NativeChar("1", BBox(39.0, 5.0, 43.0, 13.0)),
+        NativeChar("L", BBox(65.0, 5.0, 69.0, 13.0)),
+        NativeChar("2", BBox(69.0, 5.0, 73.0, 13.0)),
+    ]
+    span = NativeSpan(
+        text="L0 L1 L2",
+        bbox=BBox(5.0, 5.0, 73.0, 13.0),
+        size=8.0,
+        block_id=1,
+        line_id=100,
+        characters=characters,
+    )
+    native.lines.append(NativeLine(spans=[span], block_id=1, line_id=100, bbox=span.bbox))
+
+    table = reconstruct_table(BBox(0.0, 0.0, 90.0, 60.0), native)
+
+    assert table is not None and table.valid
+    assert table.text_rows()[0] == ["L0", "L1", "L2"]
+    assert [line.text for cell in table.rows[0] for line in cell.physical_lines] == [
+        "L0",
+        "L1",
+        "L2",
+    ]
+
+
+def test_character_positions_do_not_split_a_true_colspan() -> None:
+    rules = [_h(y) for y in (0.0, 20.0, 40.0, 60.0)] + [
+        _v(0.0),
+        _v(30.0, 20.0, 60.0),
+        _v(60.0, 20.0, 60.0),
+        _v(90.0),
+    ]
+    native = _native_grid_page(
+        rules,
+        [["", "", ""], ["a", "1", "x"], ["b", "2", "y"]],
+    )
+    characters = [
+        NativeChar("W", BBox(5.0, 5.0, 10.0, 13.0)),
+        NativeChar("I", BBox(35.0, 5.0, 40.0, 13.0)),
+        NativeChar("D", BBox(65.0, 5.0, 70.0, 13.0)),
+        NativeChar("E", BBox(70.0, 5.0, 75.0, 13.0)),
+    ]
+    span = NativeSpan(
+        text="WIDE",
+        bbox=BBox(5.0, 5.0, 75.0, 13.0),
+        size=8.0,
+        block_id=1,
+        line_id=100,
+        characters=characters,
+    )
+    native.lines.append(NativeLine(spans=[span], block_id=1, line_id=100, bbox=span.bbox))
+
+    table = reconstruct_table(BBox(0.0, 0.0, 90.0, 60.0), native)
+
+    assert table is not None and table.valid
+    assert table.rows[0][0].colspan == 3
+    assert table.text_rows()[0] == ["WIDE", "", ""]
+    assert [line.text for line in table.rows[0][0].physical_lines] == ["WIDE"]
 
 
 def test_rowspan_is_split_when_each_atomic_row_has_its_own_text() -> None:
@@ -1037,7 +1107,7 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
         os.environ["RAG_PARSER_FIXTURE_PDF"],
         os.environ["RAG_PARSER_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[6, 7, 8, 9, 10, 14, 15, 47, 49, 54, 57, 64, 65, 71, 76],
+        pages=[6, 7, 8, 9, 10, 14, 15, 23, 30, 38, 47, 49, 54, 57, 64, 65, 71, 76],
     )
     assert summary["quality"]["orphan_text_lines"] == 0
     assert summary["quality"]["duplicate_owned_lines"] == 0
@@ -1091,6 +1161,34 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
         for block in pages[15]["blocks"]
         if block["type"] == "text"
     )
+    io_change_table = next(
+        block
+        for block in pages[23]["blocks"]
+        if block["type"] == "table" and block["rows"][1][0] == "IOAICR"
+    )
+    assert io_change_table["rows"][1][1:3] == ["IOAICR7", "IOAICR6"]
+    port_mapping_table = next(
+        block
+        for block in pages[30]["blocks"]
+        if block["type"] == "table" and block["rows"][1][0] == "MPPWM1"
+    )
+    assert port_mapping_table["rows"][1][:3] == ["MPPWM1", "MPPWMM1", "MPPWMM0"]
+    pwm_control_table = next(
+        block
+        for block in pages[38]["blocks"]
+        if block["type"] == "table" and block["rows"][1][0] == "PWM1CR"
+    )
+    assert pwm_control_table["rows"][1] == [
+        "PWM1CR",
+        "PWM13POL",
+        "PWM12POL",
+        "PWM11POL",
+        "PWM10POL",
+        "PWM13EN",
+        "PWM12EN",
+        "PWM11EN",
+        "PWM10EN",
+    ]
     assert _table_shapes(pages[49]) == [(4, 9)]
     assert _table_shapes(pages[54]) == [(4, 9), (3, 2)]
     compact_table = _table(pages[54], 3, 2)
@@ -1147,7 +1245,26 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
         os.environ["RAG_PARSER_M9_FIXTURE_PDF"],
         os.environ["RAG_PARSER_M9_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[9, 10, 11, 12, 13, 24, 28, 41, 72, 100, 119, 122, 126, 134, 135, 136],
+        pages=[
+            9,
+            10,
+            11,
+            12,
+            13,
+            24,
+            28,
+            41,
+            45,
+            72,
+            82,
+            100,
+            119,
+            122,
+            126,
+            134,
+            135,
+            136,
+        ],
     )
     pages = {
         page["page"]: page
@@ -1194,6 +1311,13 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
     register_table = _table(pages[28], 34, 10)
     assert _cell(register_table, 0, 0)["colspan"] == 10
     assert all(cell["rowspan"] == 1 for cell in register_table["cells"] if cell["row"] >= 1)
+
+    io_change_table = _table(pages[45], 6, 9)
+    assert io_change_table["rows"][1][2:4] == ["IOAICR6", "IOAICR5"]
+    assert io_change_table["rows"][2][2:4] == ["IOBICR6", "IOBICR5"]
+    baud_rate_tables = [block for block in pages[82]["blocks"] if block["type"] == "table"]
+    assert len(baud_rate_tables) == 2
+    assert all(table["rows"][0][0] and table["rows"][0][1] for table in baud_rate_tables)
 
     option_table = _table(pages[122], 32, 3)
     assert [
@@ -1262,7 +1386,7 @@ def test_m8p5170_visual_and_table_regression(tmp_path: Path) -> None:
         os.environ["RAG_PARSER_M8P5170_FIXTURE_PDF"],
         os.environ["RAG_PARSER_M8P5170_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[7, 8, 12, 27, 28, 39, 40, 41],
+        pages=[7, 8, 12, 27, 28, 29, 39, 40, 41],
     )
     pages = {
         page["page"]: page
@@ -1308,6 +1432,23 @@ def test_m8p5170_visual_and_table_regression(tmp_path: Path) -> None:
         for page_number in (27, 28, 39)
         for block in pages[page_number]["blocks"]
     )
+
+    pwm_control_table = next(
+        block
+        for block in pages[29]["blocks"]
+        if block["type"] == "table" and block["rows"][1][0] == "PWM0CR"
+    )
+    assert pwm_control_table["rows"][1] == [
+        "PWM0CR",
+        "PWM03EN",
+        "PWM03OE",
+        "PWM02EN",
+        "PWM02OE",
+        "PWM01EN",
+        "PWM01OE",
+        "PWM00EN",
+        "PWM00OE",
+    ]
 
     option_table = _table(pages[39], 24, 3)
     assert [

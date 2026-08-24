@@ -26,6 +26,14 @@ from .models import BBox, NativeDrawing, NativeImage, VectorRule
 
 
 @dataclass
+class NativeChar:
+    """One positioned character retained for cell-level table assignment."""
+
+    text: str
+    bbox: BBox
+
+
+@dataclass
 class NativeSpan:
     text: str
     bbox: BBox
@@ -35,6 +43,7 @@ class NativeSpan:
     block_id: int = -1
     line_id: int = -1
     span_id: int = -1
+    characters: list[NativeChar] = field(default_factory=list)
 
     @property
     def dominant_style(self) -> tuple[float, int]:
@@ -285,6 +294,14 @@ def extract_native_page(page: fitz.Page) -> NativePage:
                         block_id=bi,
                         line_id=li,
                         span_id=si,
+                        characters=[
+                            NativeChar(
+                                text=char.get("c", ""),
+                                bbox=BBox(*char["bbox"]),
+                            )
+                            for char in chars
+                            if char.get("bbox") is not None
+                        ],
                     )
                 )
             if ln.spans:

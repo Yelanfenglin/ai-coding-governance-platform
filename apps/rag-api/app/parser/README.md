@@ -17,6 +17,9 @@ PDF 原生结构 + PP-DocLayoutV3 anchor 的确定性规格书重建器。目标
 11. 双栏检测与阅读顺序逻辑保持独立，本轮后处理不修改 layout block 或列顺序。
 12. 恢复后的编号标题形成 `section_id/section_path`；跨页表格只在章节标识、列数和页边位置一致时建立续页链接，标题只作结构上下文，不按标题词义套表格模板。
 13. 外层 cell 内的物理行只有在所有列等数、基线对齐、至少半数列显示非被迫换行，并在相邻正文行中重复出现时才形成 `semantic_rows`；单行证据、row 0 表头和普通视觉折行不升级。
+14. 若 PDF 把一个原生 span 的字符跨多个真实 cell origin 编码，按字符坐标分配到各 atomic 格；真实 rowspan/colspan 覆盖的原子格共享同一 origin，因此完整保留原 span 不被拆开。
+15. 跨页表格物理拼接只发生在“上一页以表格结束 + 下一页第一个正文块就是表格 + 表头（去空白归一化）一致 + 列数与水平 span 一致”时；跨页真值、表格截图、rowspan/单元格被页切断、以及相邻页相同 `Bit7..Bit0` 表头但前置章节标题的表全部不合并。
+16. 含 `目录` 标题或 ≥5 条“点线+末尾页码”视觉行的页面进入 TOC 模式：停止段落重排，按 PDF 视觉基线一行一项重建，末尾页码为一条目的硬闭合；长标题只在前一行无页码、下一行带页码时保守拼接。
 
 ## 产物
 
@@ -29,7 +32,7 @@ PDF 原生结构 + PP-DocLayoutV3 anchor 的确定性规格书重建器。目标
 └── summary.json         数量、repair 计数与质量不变量
 ```
 
-结构化表同时提供二维 `rows` 与保真 `cells`；后者包含 `row`、`col`、`rowspan`、`colspan`、`text` 和 `bbox`。发现高置信无边框嵌套子表时，额外提供规范化 `semantic_rows` 及 `semantic_reconstruction.row_provenance`（outer row、subrow、原生行 ID 和 bbox）；Markdown 使用规范化视图，但原始 outer topology 不覆盖、不复制成另一套 chunk。页面边界使用 `<!-- pdf-page: N -->` 注释，不作为 Markdown 标题污染章节树。
+结构化表同时提供二维 `rows` 与保真 `cells`；后者包含 `row`、`col`、`rowspan`、`colspan`、`text` 和 `bbox`。发现高置信无边框嵌套子表时，额外提供规范化 `semantic_rows` 及 `semantic_reconstruction.row_provenance`（outer row、subrow、原生行 ID 和 bbox）；Markdown 使用规范化视图，但原始 outer topology 不覆盖、不复制成另一套 chunk。跨页拼接后的逻辑表记录 `source_pages`，Markdown 在表上以 `<!-- pdf-pages: N-M -->` 注释标明来源页范围；被整页吸收（无剩余内容）的页面不再生成独立的 `<!-- pdf-page: N -->` 标记。页面边界使用 `<!-- pdf-page: N -->` 注释，不作为 Markdown 标题污染章节树。
 
 ## CLI
 

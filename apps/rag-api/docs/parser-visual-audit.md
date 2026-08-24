@@ -23,6 +23,12 @@
 
 原有 224 张结构化表还按页面与 bbox 对齐，逐张比较了 `n_rows`、`n_cols`、二维文本和全部 cell 的 `rowspan/colspan`；增强链路未造成拓扑漂移。
 
+## 跨单元格 text span 审计
+
+对最终表格逐一用 PDF `rawdict` 字符 bbox 反查 cell origin，共发现 8 个原生 text span 的字符实际落入多个独立单元格。它们均已在源页上视觉确认；修复只在“多个字符分组对应多个不同 origin”时启用，共恢复 29 个 cell 的文字归属。若字符虽跨越多个 atomic slot、但这些 slot 属于同一个 rowspan/colspan origin，则完整保留原 span。
+
+未修改解析器与修复版在同一环境重跑全部 267 页后，274 张 page-local 表的数量和统计完全一致；跨页拼接后的 264 个表块逐格 A/B 比较，除上述 8 个 span 的无损重分配外，表格 bbox、`n_rows/n_cols`、全部 `rowspan/colspan`、非表格 block 和 snapshot 文件均相同。
+
 ## 无边框嵌套子表审计
 
 对最终 274 张结构化表逐格读取 PDF 原生物理行，枚举“同一 outer row 中所有列行数相同且基线对齐”的候选。生产判定不使用文档名、页码、章节标题词义或字段词表，还要求至少半数列的行宽明显小于 cell 宽度，并在相邻正文行中重复出现；row 0 始终作为表头保留。

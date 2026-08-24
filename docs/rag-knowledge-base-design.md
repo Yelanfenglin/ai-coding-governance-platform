@@ -101,13 +101,14 @@
 | 模块 | 职责 |
 |---|---|
 | `scripts/pp_doclayout_all.py` | PP-DocLayoutV3 页面 anchor 批处理、断点续跑、原子 checkpoint |
-| `app/parser/native_pdf.py` | PyMuPDF 原生 block/line/span/vector/image 提取 |
+| `app/parser/native_pdf.py` | PyMuPDF 原生 block/line/span/vector/image 提取；span 保留字符级 bbox |
 | `app/parser/anchor.py` | 每条原生文字行绑定唯一 layout owner，漏检行生成保守 text anchor |
-| `app/parser/table.py` | ruled-grid、原子单元格、rowspan/colspan 与保守 topology repair |
-| `app/parser/page.py` | PageIR、双栏阅读顺序、排他 ownership 与 snapshot 兜底 |
-| `app/parser/postprocess.py` | 编号标题恢复、负向 note 过滤、块内语义换行 |
+| `app/parser/table.py` | ruled-grid、原子单元格、rowspan/colspan、保守 topology repair 与字符级跨格分配 |
+| `app/parser/page.py` | PageIR、双栏阅读顺序、排他 ownership、snapshot 兜底与目录页检测 |
+| `app/parser/cross_page.py` | 逻辑表跨页物理拼接（表头去空白归一化一致 + 列结构与水平 span 一致 + 下一页首 block 为表） |
+| `app/parser/postprocess.py` | 编号标题恢复、负向 note 过滤、块内语义换行与 TOC 视觉行重建 |
 | `app/parser/document.py` | 章节路径与跨页表格显式链接 |
-| `app/parser/renderer.py` | Markdown/HTML 表格、图片引用和注释 |
+| `app/parser/renderer.py` | Markdown/HTML 表格、图片引用、`pdf-page`/`pdf-pages` 注释 |
 
 旧的 `parser_v0` 与 `parser_v1_minimal` 已删除；正式入口唯一为 `python -m app.parser.parse`。
 
@@ -123,7 +124,8 @@
 ### 4.3 本阶段边界
 
 - 已验证原生文字层规格书；扫描 PDF 的 PP-OCRv6 文字识别尚未接入正式入口。
-- 表格跨页只写显式 continuation metadata，不物理拼接 rows。
+- 表格跨页已物理拼接为同一定义的表块（`<!-- pdf-pages: N-M -->` + `source_pages`），仅收敛于“下一页首 block 为表 + 表头一致 + 列结构与水平 span 一致”；rowspan/单元格被页切断的拼接不做。
+- 目录区域已按视觉基线一行一项重建；TOC 条目仍保留点线与页码，不参与章节树。
 - 图片保留截图与 annotations；VLM caption、图关系理解尚未实现。
 - chunking、embedding、PostgreSQL/Milvus 入库属于 Phase 2，不在解析器中混入临时实现。
 - 页眉页脚噪点由 layout NOISE anchor 与页边兜底剔除，不进正文。
