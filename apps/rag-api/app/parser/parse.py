@@ -10,6 +10,7 @@ from pathlib import Path
 import fitz
 
 from .anchor import add_recovered_table_anchors, bind_native_lines, make_anchors
+from .cross_page import stitch_cross_page_tables
 from .document import SectionTracker, link_table_continuations
 from .layout import load_all_proposals
 from .native_pdf import extract_native_page
@@ -24,6 +25,7 @@ from .page import (
 )
 from .postprocess import recover_document_headings
 from .renderer import blocks_to_markdown, snapshot_filename
+from .table import Table
 from .visual import add_recovered_visual_anchors, refine_snapshot_anchors
 
 
@@ -91,6 +93,7 @@ def _run(
 
             _save_snapshots(document, page_number, page_ir, snapshot_dir, dpi)
 
+    stitch_cross_page_tables(page_irs)
     recover_document_headings(page_irs)
     section_tracker = SectionTracker()
     page_dicts = [section_tracker.annotate(_page_dict(page_ir)) for page_ir in page_irs]
@@ -103,7 +106,11 @@ def _run(
 
     markdown_parts = [f"# {pdf_path.stem}"]
     for page_ir in page_irs:
+        if not page_ir.blocks:
+            continue
         markdown = blocks_to_markdown(page_ir, "../snapshots")
+        if not markdown.strip():
+            continue
         markdown_parts.append(f"<!-- pdf-page: {page_ir.page_number} -->\n\n{markdown}")
     (markdown_dir / "full.md").write_text("\n\n".join(markdown_parts), encoding="utf-8")
     (out / "pages.json").write_text(
@@ -151,16 +158,15 @@ def _page_dict(page: PageIR) -> dict:
         elif isinstance(block, TableBlock):
             cells = []
             for cell in block.table.origin_cells():
-                cells.append(
-                    {
-                        "row": cell.row,
-                        "col": cell.col,
-                        "rowspan": cell.rowspan,
-                        "colspan": cell.colspan,
-                        "text": cell.text,
-                        "bbox": cell.bbox.to_tuple() if cell.bbox else None,
-                    }
-                )
+                cell_item = {
+                    "row": cell.row,
+                    "col": cell.col,
+                    "rowspan": cell.rowspan,
+                    "colspan": cell.colspan,
+                    "text": cell.text,
+                    "bbox": cell.bbox.to_tuple() if cell.bbox else None,
+                }
+                cells.append(cell_item)
             item = {
                 "type": "table",
                 "bbox": block.bbox.to_tuple(),
@@ -170,6 +176,16 @@ def _page_dict(page: PageIR) -> dict:
                 "rows": block.table.text_rows(),
                 "cells": cells,
             }
+            if block.table.aligned_subrows:
+                item["semantic_rows"] = block.table.semantic_text_rows()
+                item["semantic_reconstruction"] = {
+                    "kind": "aligned_subrows",
+                    "method": "native_baseline_repetition_v1",
+                    "parent_rows": block.table.aligned_parent_rows,
+                    "row_provenance": _semantic_row_provenance(block.table),
+                }
+            if block.source_pages:
+                item["source_pages"] = block.source_pages
         elif isinstance(block, SnapshotBlock):
             snapshot_ordinal += 1
             item = {
@@ -193,6 +209,37 @@ def _page_dict(page: PageIR) -> dict:
         "stats": page.stats,
         "blocks": blocks,
     }
+
+
+def _semantic_row_provenance(table: Table) -> list[dict]:
+    by_parent = {}
+    for subrow in table.aligned_subrows:
+        by_parent.setdefault(subrow.parent_row, []).append(subrow)
+    provenance: list[dict] = []
+    semantic_row = 0
+    for parent_row in range(table.n_rows):
+        recovered = sorted(by_parent.get(parent_row, []), key=lambda item: item.subrow)
+        if not recovered:
+            semantic_row += 1
+            continue
+        for subrow in recovered:
+            sources = []
+            for column in range(table.n_cols):
+                cell = table.rows[parent_row][column]
+                line = cell.physical_lines[subrow.subrow]
+                sources.append([list(source) for source in line.source_lines])
+            provenance.append(
+                {
+                    "semantic_row": semantic_row,
+                    "parent_row": subrow.parent_row,
+                    "subrow": subrow.subrow,
+                    "cell_bboxes": [bbox.to_tuple() for bbox in subrow.bboxes],
+                    "source_lines": sources,
+                    "max_baseline_delta": subrow.max_baseline_delta,
+                }
+            )
+            semantic_row += 1
+    return provenance
 
 
 def _save_snapshots(
@@ -250,6 +297,8 @@ def _summary(
         "tables_recovered": sum(item.get("tables_recovered", 0) for item in stats),
         "table_merge_repairs": sum(item.get("table_merge_repairs", 0) for item in stats),
         "table_topology_upgrades": sum(item.get("table_topology_upgrades", 0) for item in stats),
+        "implicit_subtable_groups": sum(item.get("implicit_subtable_groups", 0) for item in stats),
+        "implicit_subrows": sum(item.get("implicit_subrows", 0) for item in stats),
         "table_snapshot_candidates": sum(item.get("tables_snapshot", 0) for item in stats),
         # Backward-compatible artifact count.  This is a model label, not
         # visually confirmed table ground truth.

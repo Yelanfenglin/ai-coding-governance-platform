@@ -17,10 +17,11 @@ atomic 区域时才保留跨度。
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 
 from .models import BBox, VectorRule
-from .native_pdf import NativePage, NativeSpan
+from .native_pdf import NativeLine, NativePage, NativeSpan
 
 # 横/竖线聚类的判定：同一条边界线的微小抖动容差
 _GAP = 4.0
@@ -33,11 +34,41 @@ _CONNECT_TOL = 3.0
 _MIN_RECORD_REPAIR_SPAN = 3
 _MIN_RECORD_ANCHOR_DENSITY = 0.8
 _MIN_NEIGHBOR_SEPARATOR_RATIO = 0.5
+# 无内部分隔线的外层 cell 有时实际包含一张按纵向基线对齐的子表。这里只在
+# 多个相邻 body row 重复出现同一几何模式时恢复；单个多行 cell、两行表头和
+# 普通视觉折行全部回退为原始 outer row。
+_MIN_ALIGNED_LINES = 2
+_STRONG_ALIGNED_LINES = 3
+_MIN_ALIGNED_ROW_RUN = 3
+_MIN_STRONG_ROWS_IN_RUN = 2
+_ALIGNED_BASELINE_TOL_RATIO = 0.3
+_ALIGNED_BASELINE_TOL_MIN = 1.25
+_STACK_LINE_MAX_WIDTH_RATIO = 0.86
 
 
 # ---------------------------------------------------------------------------
 # 单元格模型
 # ---------------------------------------------------------------------------
+@dataclass
+class CellLine:
+    """One physical PDF text line inside a reconstructed cell."""
+
+    text: str
+    bbox: BBox
+    source_lines: tuple[tuple[int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class AlignedSubrow:
+    """A high-confidence record recovered from aligned lines across cells."""
+
+    parent_row: int
+    subrow: int
+    values: tuple[str, ...]
+    bboxes: tuple[BBox, ...]
+    max_baseline_delta: float = 0.0
+
+
 @dataclass
 class Cell:
     row: int
@@ -46,6 +77,7 @@ class Cell:
     colspan: int = 1
     text: str = ""
     bbox: BBox | None = None
+    physical_lines: list[CellLine] = field(default_factory=list)
 
 
 def _is_origin(row: list, c: Cell) -> bool:
@@ -63,6 +95,7 @@ class Table:
     bbox: BBox | None = None
     split_merges: int = 0
     validated: bool | None = None
+    aligned_subrows: list[AlignedSubrow] = field(default_factory=list)
 
     @property
     def record_rows(self) -> int:
@@ -103,6 +136,33 @@ class Table:
             [cell.text if cell is not None and _is_origin(row, cell) else "" for cell in row]
             for row in self.rows
         ]
+
+    @property
+    def aligned_parent_rows(self) -> list[int]:
+        return sorted({subrow.parent_row for subrow in self.aligned_subrows})
+
+    def semantic_text_rows(self) -> list[list[str]]:
+        """Expand only parser-confirmed implicit subtable rows.
+
+        ``text_rows`` remains the lossless outer PDF topology.  This view is a
+        canonical retrieval representation, not another downstream guess.
+        """
+        if not self.aligned_subrows:
+            return self.text_rows()
+        by_parent: dict[int, list[AlignedSubrow]] = {}
+        for subrow in self.aligned_subrows:
+            by_parent.setdefault(subrow.parent_row, []).append(subrow)
+        semantic: list[list[str]] = []
+        for row_index, raw_row in enumerate(self.text_rows()):
+            recovered = sorted(
+                by_parent.get(row_index, []),
+                key=lambda item: item.subrow,
+            )
+            if recovered:
+                semantic.extend([list(item.values) for item in recovered])
+            else:
+                semantic.append(raw_row)
+        return semantic
 
 
 @dataclass
@@ -345,6 +405,8 @@ def reconstruct_table(
         split_merges=split_merges,
         validated=validated,
     )
+    _annotate_physical_cell_lines(table, native)
+    table.aligned_subrows = _recover_aligned_subrows(table)
     return table
 
 
@@ -635,6 +697,213 @@ def _looks_like_short_vertical_text(
         0 < len(fragment) <= 2
         and all(not (character.isascii() and character.isalnum()) for character in fragment)
         for fragment in fragments
+    )
+
+
+@dataclass(frozen=True)
+class _LineFragment:
+    spans: tuple[NativeSpan, ...]
+    bbox: BBox
+    source_line: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _AlignedRowCandidate:
+    row: int
+    cells: tuple[Cell, ...]
+    line_count: int
+    max_baseline_delta: float
+
+
+def _annotate_physical_cell_lines(table: Table, native: NativePage) -> None:
+    """Attach native line geometry without changing the outer cell text.
+
+    Span centers decide ownership so a native line that happens to span several
+    columns is clipped per cell.  Fragments from separate PDF blocks are merged
+    only when their vertical centers describe the same physical baseline.
+    """
+    for cell in table.origin_cells():
+        if cell.bbox is None:
+            continue
+        fragments: list[_LineFragment] = []
+        for line in native.lines:
+            selected = tuple(
+                span
+                for span in line.spans
+                if span.text.strip() and _span_centered_in(span, cell.bbox)
+            )
+            if not selected:
+                continue
+            fragments.append(
+                _LineFragment(
+                    spans=selected,
+                    bbox=_spans_bbox(selected),
+                    source_line=(line.block_id, line.line_id),
+                )
+            )
+        cell.physical_lines = _merge_line_fragments(fragments)
+
+
+def _merge_line_fragments(fragments: list[_LineFragment]) -> list[CellLine]:
+    if not fragments:
+        return []
+    median_height = statistics.median(fragment.bbox.h for fragment in fragments)
+    tolerance = max(0.75, median_height * 0.18)
+    bands: list[list[_LineFragment]] = []
+    for fragment in sorted(fragments, key=lambda item: (item.bbox.cy, item.bbox.x0)):
+        if not bands:
+            bands.append([fragment])
+            continue
+        band_center = statistics.median(item.bbox.cy for item in bands[-1])
+        if abs(fragment.bbox.cy - band_center) <= tolerance:
+            bands[-1].append(fragment)
+        else:
+            bands.append([fragment])
+
+    physical_lines: list[CellLine] = []
+    for band in bands:
+        spans = tuple(span for fragment in band for span in fragment.spans)
+        text = NativeLine(spans=list(spans)).text
+        if not text:
+            continue
+        physical_lines.append(
+            CellLine(
+                text=text,
+                bbox=_spans_bbox(spans),
+                source_lines=tuple(sorted({fragment.source_line for fragment in band})),
+            )
+        )
+    return physical_lines
+
+
+def _recover_aligned_subrows(table: Table) -> list[AlignedSubrow]:
+    """Recover borderless nested records from repeated cross-cell baselines.
+
+    A single outer row is never enough evidence: ordinary wrapped prose can
+    align by chance.  Candidate body rows must have the same number of physical
+    lines in every column, aligned baselines, and deliberate horizontal slack
+    in at least half the columns.  Only a consecutive run with either two
+    3+-line rows or three 2+-line rows is promoted.
+    """
+    candidates: list[_AlignedRowCandidate] = []
+    # The renderer and current table contract treat row zero as the header.
+    # Keep it intact even when its labels wrap over several physical lines.
+    for row_index in range(1, table.n_rows):
+        cells = _plain_origin_row(table, row_index)
+        if cells is None:
+            continue
+        line_counts = [len(cell.physical_lines) for cell in cells]
+        if not line_counts or min(line_counts) < _MIN_ALIGNED_LINES or len(set(line_counts)) != 1:
+            continue
+        max_delta = _max_baseline_delta(cells)
+        if max_delta is None:
+            continue
+        compact_columns = sum(_has_deliberate_line_breaks(cell) for cell in cells)
+        if compact_columns < (table.n_cols + 1) // 2:
+            continue
+        candidates.append(
+            _AlignedRowCandidate(
+                row=row_index,
+                cells=tuple(cells),
+                line_count=line_counts[0],
+                max_baseline_delta=max_delta,
+            )
+        )
+
+    accepted: list[_AlignedRowCandidate] = []
+    for run in _consecutive_candidate_runs(candidates):
+        strong_rows = sum(candidate.line_count >= _STRONG_ALIGNED_LINES for candidate in run)
+        if len(run) >= _MIN_ALIGNED_ROW_RUN or strong_rows >= _MIN_STRONG_ROWS_IN_RUN:
+            accepted.extend(run)
+
+    recovered: list[AlignedSubrow] = []
+    for candidate in accepted:
+        for subrow_index in range(candidate.line_count):
+            lines = [cell.physical_lines[subrow_index] for cell in candidate.cells]
+            centers = [line.bbox.cy for line in lines]
+            recovered.append(
+                AlignedSubrow(
+                    parent_row=candidate.row,
+                    subrow=subrow_index,
+                    values=tuple(line.text for line in lines),
+                    bboxes=tuple(line.bbox for line in lines),
+                    max_baseline_delta=max(centers) - min(centers),
+                )
+            )
+    return recovered
+
+
+def _plain_origin_row(table: Table, row_index: int) -> list[Cell] | None:
+    if row_index >= len(table.rows) or len(table.rows[row_index]) != table.n_cols:
+        return None
+    row = table.rows[row_index]
+    cells: list[Cell] = []
+    for column, cell in enumerate(row):
+        if (
+            cell is None
+            or cell.row != row_index
+            or cell.col != column
+            or cell.rowspan != 1
+            or cell.colspan != 1
+            or not cell.text.strip()
+            or cell.bbox is None
+        ):
+            return None
+        cells.append(cell)
+    return cells
+
+
+def _max_baseline_delta(cells: list[Cell]) -> float | None:
+    lines = [line for cell in cells for line in cell.physical_lines]
+    if not lines:
+        return None
+    tolerance = max(
+        _ALIGNED_BASELINE_TOL_MIN,
+        statistics.median(line.bbox.h for line in lines) * _ALIGNED_BASELINE_TOL_RATIO,
+    )
+    worst = 0.0
+    for line_index in range(len(cells[0].physical_lines)):
+        centers = [cell.physical_lines[line_index].bbox.cy for cell in cells]
+        delta = max(centers) - min(centers)
+        if delta > tolerance:
+            return None
+        worst = max(worst, delta)
+    return worst
+
+
+def _has_deliberate_line_breaks(cell: Cell) -> bool:
+    if cell.bbox is None or cell.bbox.w <= 0.0 or not cell.physical_lines:
+        return False
+    return max(line.bbox.w for line in cell.physical_lines) <= (
+        cell.bbox.w * _STACK_LINE_MAX_WIDTH_RATIO
+    )
+
+
+def _consecutive_candidate_runs(
+    candidates: list[_AlignedRowCandidate],
+) -> list[list[_AlignedRowCandidate]]:
+    runs: list[list[_AlignedRowCandidate]] = []
+    for candidate in candidates:
+        if runs and candidate.row == runs[-1][-1].row + 1:
+            runs[-1].append(candidate)
+        else:
+            runs.append([candidate])
+    return runs
+
+
+def _spans_bbox(spans: tuple[NativeSpan, ...]) -> BBox:
+    return BBox(
+        min(span.bbox.x0 for span in spans),
+        min(span.bbox.y0 for span in spans),
+        max(span.bbox.x1 for span in spans),
+        max(span.bbox.y1 for span in spans),
+    )
+
+
+def _span_centered_in(span: NativeSpan, bbox: BBox, margin: float = 1.0) -> bool:
+    return (
+        bbox.x0 - margin <= span.bbox.cx <= bbox.x1 + margin
+        and bbox.y0 - margin <= span.bbox.cy <= bbox.y1 + margin
     )
 
 

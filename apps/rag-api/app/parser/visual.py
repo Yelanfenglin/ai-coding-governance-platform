@@ -73,8 +73,7 @@ def refine_snapshot_anchors(native: NativePage, anchors: list[Anchor]) -> None:
             [
                 bbox
                 for index, bbox in enumerate(original_boxes)
-                if index != anchor_index
-                and anchors[index].kind in ("TABLE", "VISUAL")
+                if index != anchor_index and anchors[index].kind in ("TABLE", "VISUAL")
             ],
             vertical_context=context_boxes,
         )

@@ -23,10 +23,13 @@ Phase 2 的 PostgreSQL、Milvus、embedding、chunking 和 API 只保留在设�
 2. `app.parser` 从 PDF 原生 text/span/vector 层恢复正文、表格和图片快照。
 3. 失败的 table anchor 只在原生分隔线形成完整二维记录时升级；缺失的向量图按图元连通性和局部文字密度保守补提。
 4. 图片裁剪框由原生图元、同图标签和相邻视觉区域共同校正；已识别正文/图题仍保留为 Markdown 文本。
-5. 结构后处理恢复编号标题层级并合并块内视觉换行。
-6. `audit_reconstruction.py` 检查文本唯一 ownership、表格边界、图片引用和页序。
+5. 对外层 cell 内跨列重复对齐的原生物理行，保守恢复无边框嵌套子表；原始 outer topology 与逐行来源同时保留。
+6. 结构后处理恢复编号标题层级并合并块内视觉换行。
+7. `audit_reconstruction.py` 检查文本唯一 ownership、表格边界、语义行来源、图片引用和页序。
 
 表格先使用旧版高置信边线冻结基线结果；只有基线失败且增强后的原生 separator 拓扑仍能通过重复行列校验时，才从 snapshot 升级为结构化表。拓扑优先使用 PDF 原生边线：细填充矩形可恢复为 rule，同一边界上的分段 rule 先做区间并集。文字只作为保守兜底，必须同时满足高密度记录锚点和邻行/邻列 separator 一致性；两行歧义、多行表头和纵排分组标签保持原跨度。
+
+表内无边框子记录不交给 chunker 二次猜测。解析器保留 outer `rows/cells` 作为保真视图，仅当多个相邻正文行在所有列中具有相同物理行数、跨列基线对齐、行宽留白充分且该模式重复出现时，才额外生成规范化 `semantic_rows`。单个多行 cell、表头换行和普通段落折行保持原样；规则不读取标题词义、引脚名或任何芯片字段。
 
 视觉区域不再直接照搬轻量模型 bbox。孤立图可向原生图元和同带标签扩展；并排或上下相邻的图以 anchor 中线隔离；已有正文/图题 anchor 构成边界，避免正文被截图吞掉。模型完全漏掉的向量图还需同时满足多图元连通、二维尺寸、局部文字密度和已有排他区域不重叠，生产规则不读取文档名、页码、标题词义或芯片字段。
 
@@ -55,10 +58,10 @@ python -m pytest -q
 
 ## 本地三文档回归
 
-| 文档 | 页数 | 最终结构化表 | topology 升级 | 剩余 table snapshot | 人工确认真表总数 | 结构审计 |
-|---|---:|---:|---:|---:|---:|---|
-| M8P6272 V1.10 | 79 | 87 | 17 | 11 | 87 | 通过 |
-| M8P5170 V1.06 | 51 | 40 | 4 | 7 | 40 | 通过 |
-| M9F6820 V1.07 | 137 | 147 | 29 | 18 | 147 | 通过 |
+| 文档 | 页数 | 最终结构化表 | topology 升级 | 隐式子表 outer rows | 规范化 subrows | 剩余 table snapshot | 结构审计 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| M8P6272 V1.10 | 79 | 87 | 17 | 14 | 48 | 11 | 通过 |
+| M8P5170 V1.06 | 51 | 40 | 4 | 6 | 24 | 7 | 通过 |
+| M9F6820 V1.07 | 137 | 147 | 29 | 18 | 78 | 18 | 通过 |
 
-三份结果均为 0 orphan text line、0 duplicate ownership、0 missing snapshot。修复前的 86 个 table snapshot 候选已经逐张人工视觉复核：其中 50 张真表全部升级，剩余 36 张均为图、波形、封装或代码等误标。最终 274 张结构化表中，原有 224 张的完整 cell 拓扑与基线逐张一致。详见 [PDF 表格视觉审计基线](docs/parser-visual-audit.md)。后续阶段边界见 [RAG 知识库系统设计](../../docs/rag-knowledge-base-design.md)。PDF、layout 产物、解析结果和真实 `.env` 都是本地数据，不应提交。
+三份结果均为 0 orphan text line、0 duplicate ownership、0 missing snapshot。修复前的 86 个 table snapshot 候选已经逐张人工视觉复核：其中 50 张真表全部升级，剩余 36 张均为图、波形、封装或代码等误标。最终 274 张结构化表中，原有 224 张的完整 cell 拓扑与基线逐张一致；新增语义视图恢复 38 个 outer row 内的 150 条对齐子记录，outer topology 仍逐格不变。详见 [PDF 表格视觉审计基线](docs/parser-visual-audit.md)。后续阶段边界见 [RAG 知识库系统设计](../../docs/rag-knowledge-base-design.md)。PDF、layout 产物、解析结果和真实 `.env` 都是本地数据，不应提交。

@@ -46,22 +46,36 @@ def _render_table(block: TableBlock) -> str:
     table = block.table
     if not table.rows:
         return ""
+    prefix = ""
+    if block.source_pages and len(block.source_pages) > 1:
+        prefix = f"<!-- pdf-pages: {'-'.join(str(p) for p in block.source_pages)} -->\n\n"
     if any(cell.rowspan > 1 or cell.colspan > 1 for cell in table.origin_cells()):
-        return _render_html_table(block)
-    rows = table.text_rows()
+        return prefix + _render_html_table(block)
+    rows = table.semantic_text_rows()
     lines: list[str] = []
     for row_index, row in enumerate(rows):
         cells = [_markdown_cell(text) for text in row]
         lines.append("| " + " | ".join(cells) + " |")
         if row_index == 0:
             lines.append("| " + " | ".join(["---"] * table.n_cols) + " |")
-    return "\n".join(lines)
+    return prefix + "\n".join(lines)
 
 
 def _render_html_table(block: TableBlock) -> str:
     table = block.table
     lines = ["<table>"]
-    for row in table.rows:
+    aligned = {}
+    for subrow in table.aligned_subrows:
+        aligned.setdefault(subrow.parent_row, []).append(subrow)
+    for row_index, row in enumerate(table.rows):
+        recovered = sorted(aligned.get(row_index, []), key=lambda item: item.subrow)
+        if recovered:
+            for subrow in recovered:
+                lines.append("  <tr>")
+                for value in subrow.values:
+                    lines.append(f"    <td>{html.escape(value.strip())}</td>")
+                lines.append("  </tr>")
+            continue
         lines.append("  <tr>")
         for cell in row:
             if cell is None or cell.col >= len(row) or row[cell.col] is not cell:

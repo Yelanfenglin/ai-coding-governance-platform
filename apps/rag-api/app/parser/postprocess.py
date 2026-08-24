@@ -183,6 +183,38 @@ def reflow_text(text: str) -> str:
     return "\n".join(output)
 
 
+_TOC_NUMBER_RE = re.compile(r"(?:[0-9]+|[ivxlcdm]+)\s*$", re.I)
+
+
+def _ends_with_page_number(text: str) -> bool:
+    return bool(_TOC_NUMBER_RE.search(text))
+
+
+def normalize_toc_text(text: str) -> str:
+    """Rebuild a table-of-contents entry list from physical visual lines.
+
+    A TOC has no paragraph concept: one visual line is one entry.  The ordinary
+    reflow joins a root-level entry (``1 产品简述``, which is not a bullet and
+    does not end in sentence punctuation) onto the previous line, so it is never
+    run here.  A trailing page number is a hard stop — the entry is complete and
+    must never be merged with the next line.  A line without a page number (a
+    wrapped title's first half) is only joined to a following line that carries
+    the page number, which is a conservative continuation heuristic.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    output = [lines[0]]
+    for line in lines[1:]:
+        if _ends_with_page_number(output[-1]):
+            output.append(line)
+        elif _ends_with_page_number(line):
+            output[-1] = _join_line(output[-1], line)
+        else:
+            output.append(line)
+    return "\n".join(output)
+
+
 def _is_numbered_heading(text: str) -> bool:
     return _parse_heading_candidate(text) is not None
 

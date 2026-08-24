@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import re
 import statistics
 from dataclasses import dataclass, field
 
 from .anchor import Anchor
 from .models import BBox
 from .native_pdf import NativePage
-from .postprocess import normalize_text_block
+from .postprocess import normalize_text_block, normalize_toc_text
 from .table import Table, reconstruct_table
+
+# TOC 区域：目录项 = 一条视觉行，以「点线 + 末尾页码」为强信号。
+_TOC_TITLE_RE = re.compile(r"^\s*目\s*录\s*$")
+_TOC_LEADER_RE = re.compile(r"(?:\.{3,}|…{2,})")
+_TOC_PAGE_NUM_RE = re.compile(r"(?:[0-9]+|[ivxlcdm]+)\s*$", re.I)
+_TOC_MIN_ENTRIES = 5
 
 
 @dataclass
@@ -29,6 +36,7 @@ class TableBlock:
     bbox: BBox
     source: str = "pp"
     pp_order: int | None = None
+    source_pages: list[int] | None = None
 
 
 @dataclass
@@ -79,6 +87,8 @@ def build_blocks(
     table_fail = 0
     table_merge_repairs = 0
     table_topology_upgrades = 0
+    implicit_subtable_groups = 0
+    implicit_subrows = 0
     visual_snapshots = 0
 
     for anchor in anchors:
@@ -117,6 +127,8 @@ def build_blocks(
                 )
                 table_success += 1
                 table_merge_repairs += table.split_merges
+                implicit_subtable_groups += len(table.aligned_parent_rows)
+                implicit_subrows += len(table.aligned_subrows)
                 if anchor.source == "native_table":
                     table_recovered += 1
                 if anchor.table_upgraded:
@@ -146,11 +158,14 @@ def build_blocks(
             visual_snapshots += 1
 
     split = _detect_two_column_split(blocks, native.width, native.height)
+    is_toc = _is_toc_page(native)
     if split is None:
-        page.blocks = _postprocess_text_blocks(_single_column_order(blocks))
+        page.blocks = _postprocess_text_blocks(_single_column_order(blocks), is_toc)
         order_mode = "pp_order"
     else:
-        page.blocks = _postprocess_text_blocks(_two_column_order(blocks, split, native.width))
+        page.blocks = _postprocess_text_blocks(
+            _two_column_order(blocks, split, native.width), is_toc
+        )
         order_mode = "two_column_repair"
 
     page.stats = {
@@ -159,6 +174,8 @@ def build_blocks(
         "tables_snapshot": table_fail,
         "table_merge_repairs": table_merge_repairs,
         "table_topology_upgrades": table_topology_upgrades,
+        "implicit_subtable_groups": implicit_subtable_groups,
+        "implicit_subrows": implicit_subrows,
         "visual_snapshots": visual_snapshots,
         "reading_order": order_mode,
     }
@@ -192,11 +209,30 @@ def prepare_table_anchors(native: NativePage, anchors: list[Anchor]) -> None:
             anchor.table = baseline
 
 
-def _postprocess_text_blocks(blocks: list[Block]) -> list[Block]:
+def _is_toc_line(text: str) -> bool:
+    line = text.strip()
+    return bool(_TOC_LEADER_RE.search(line) and _TOC_PAGE_NUM_RE.search(line))
+
+
+def _is_toc_page(native: NativePage) -> bool:
+    """A page is a table-of-contents page when it carries a ``目录`` title or a
+    dense run of dot-leader entries that each end in a page number."""
+    text_lines = [line.text.strip() for line in native.lines if line.text.strip()]
+    if any(_TOC_TITLE_RE.match(line) for line in text_lines):
+        return True
+    return sum(1 for line in text_lines if _is_toc_line(line)) >= _TOC_MIN_ENTRIES
+
+
+def _postprocess_text_blocks(blocks: list[Block], is_toc: bool) -> list[Block]:
     for block in blocks:
         if not isinstance(block, TextBlock):
             continue
-        block.kind, block.text = normalize_text_block(block.kind, block.text)
+        if is_toc and block.kind == "paragraph":
+            # TOC has no paragraph: rebuild one entry per visual line, never
+            # the ordinary reflow (which joins root-level entries).
+            block.text = normalize_toc_text(block.text)
+        else:
+            block.kind, block.text = normalize_text_block(block.kind, block.text)
     return blocks
 
 

@@ -10,12 +10,14 @@ import fitz
 import pytest
 
 from app.parser.anchor import Anchor
+from app.parser.cross_page import stitch_cross_page_tables
 from app.parser.document import SectionTracker, link_table_continuations
 from app.parser.models import BBox, NativeDrawing, VectorRule
 from app.parser.native_pdf import NativeLine, NativePage, NativeSpan, _extract_rules
 from app.parser.native_tables import recover_missing_tables
 from app.parser.page import (
     PageIR,
+    TableBlock,
     TextBlock,
     _detect_two_column_split,
     _two_column_order,
@@ -25,11 +27,14 @@ from app.parser.parse import _run
 from app.parser.postprocess import (
     markdown_heading_level,
     normalize_text_block,
+    normalize_toc_text,
     recover_document_headings,
     reflow_text,
 )
 from app.parser.renderer import _render_block
 from app.parser.table import (
+    Cell,
+    Table,
     _horiz_cover,
     _vert_cover,
     connected_rule_components,
@@ -468,6 +473,110 @@ def test_colspan_requires_one_text_anchor(
     assert table.text_rows()[0] == expected_text
 
 
+def test_repeated_aligned_cell_lines_become_canonical_subrows() -> None:
+    native, bbox = _native_aligned_cell_page(body_rows=2, line_count=3)
+
+    table = reconstruct_table(bbox, native)
+
+    assert table is not None and table.valid
+    assert table.text_rows() == [
+        ["h0", "h1", "h2"],
+        ["r0c0s0 r0c0s1 r0c0s2", "r0c1s0 r0c1s1 r0c1s2", "r0c2s0 r0c2s1 r0c2s2"],
+        ["r1c0s0 r1c0s1 r1c0s2", "r1c1s0 r1c1s1 r1c1s2", "r1c2s0 r1c2s1 r1c2s2"],
+    ]
+    assert table.aligned_parent_rows == [1, 2]
+    assert table.semantic_text_rows() == [
+        ["h0", "h1", "h2"],
+        ["r0c0s0", "r0c1s0", "r0c2s0"],
+        ["r0c0s1", "r0c1s1", "r0c2s1"],
+        ["r0c0s2", "r0c1s2", "r0c2s2"],
+        ["r1c0s0", "r1c1s0", "r1c2s0"],
+        ["r1c0s1", "r1c1s1", "r1c2s1"],
+        ["r1c0s2", "r1c1s2", "r1c2s2"],
+    ]
+    rendered = _render_block(TableBlock(table=table, bbox=bbox))
+    assert "| r0c0s1 | r0c1s1 | r0c2s1 |" in rendered
+    assert "r0c0s0 r0c0s1" not in rendered
+
+
+def test_three_repeated_two_line_rows_are_enough_context() -> None:
+    native, bbox = _native_aligned_cell_page(body_rows=3, line_count=2)
+
+    table = reconstruct_table(bbox, native)
+
+    assert table is not None and table.valid
+    assert table.aligned_parent_rows == [1, 2, 3]
+    assert len(table.aligned_subrows) == 6
+
+
+def test_aligned_visual_wraps_remain_outer_cells_when_lines_fill_columns() -> None:
+    native, bbox = _native_aligned_cell_page(
+        body_rows=2,
+        line_count=3,
+        line_width_ratio=0.93,
+    )
+
+    table = reconstruct_table(bbox, native)
+
+    assert table is not None and table.valid
+    assert table.aligned_subrows == []
+    assert len(table.semantic_text_rows()) == 3
+
+
+def _native_aligned_cell_page(
+    *,
+    body_rows: int,
+    line_count: int,
+    line_width_ratio: float = 0.6,
+) -> tuple[NativePage, BBox]:
+    column_width = 30.0
+    table_width = 90.0
+    header_height = 20.0
+    line_step = 15.0
+    body_row_height = line_count * line_step + 8.0
+    table_height = header_height + body_rows * body_row_height
+    row_edges = [header_height + row * body_row_height for row in range(body_rows + 1)]
+    rules = [_h(0.0), *[_h(edge) for edge in row_edges]] + [
+        _v(x, 0.0, table_height) for x in (0.0, 30.0, 60.0, 90.0)
+    ]
+    lines: list[NativeLine] = []
+    line_id = 0
+    for col in range(3):
+        bbox = BBox(col * column_width + 3.0, 5.0, col * column_width + 13.0, 13.0)
+        lines.append(_native_line(f"h{col}", bbox, line_id))
+        line_id += 1
+    for body_row in range(body_rows):
+        row_top = header_height + body_row * body_row_height
+        for col in range(3):
+            for subrow in range(line_count):
+                x0 = col * column_width + 2.0
+                y0 = row_top + 3.0 + subrow * line_step
+                bbox = BBox(
+                    x0,
+                    y0,
+                    x0 + column_width * line_width_ratio,
+                    y0 + 8.0,
+                )
+                lines.append(
+                    _native_line(
+                        f"r{body_row}c{col}s{subrow}",
+                        bbox,
+                        line_id,
+                    )
+                )
+                line_id += 1
+    return (
+        NativePage(
+            page_number=1,
+            width=100.0,
+            height=table_height + 20.0,
+            lines=lines,
+            rules=rules,
+        ),
+        BBox(0.0, 0.0, table_width, table_height),
+    )
+
+
 def _native_grid_page(rules: list[VectorRule], text_rows: list[list[str]]) -> NativePage:
     lines: list[NativeLine] = []
     line_id = 0
@@ -798,6 +907,127 @@ def test_paragraph_reflow_joins_visual_wraps_and_preserves_bullets() -> None:
     )
 
 
+def test_toc_reflow_keeps_each_entry_on_its_own_line() -> None:
+    # Root-level entries ("1 产品简述", "2 中央处理器") are not bullets and do
+    # not end in sentence punctuation, so the ordinary reflow joins them onto
+    # the previous line.  A TOC must keep one visual line per entry.
+    source = (
+        "应用注意事项 ......... 5\n"
+        "1 产品简述 ........ 6\n"
+        "1.1 特性 ........ 6\n"
+        "1.3 引脚描述 ..... 8\n"
+        "2 中央处理器（CPU） ....... 9\n"
+        "2.1 程序存储器 ..... 9"
+    )
+    assert normalize_toc_text(source) == "\n".join(
+        [
+            "应用注意事项 ......... 5",
+            "1 产品简述 ........ 6",
+            "1.1 特性 ........ 6",
+            "1.3 引脚描述 ..... 8",
+            "2 中央处理器（CPU） ....... 9",
+            "2.1 程序存储器 ..... 9",
+        ]
+    )
+
+
+def test_toc_reflow_joins_only_a_wrapped_title_line() -> None:
+    # A first half of a long title (no trailing page number) is joined to the
+    # following line that carries the page number; a second title line that
+    # already ends in a page number is never merged with the next entry.
+    source = (
+        "12.3 An Extremely Long Description Of Some\n"
+        "Peripheral Register .......... 88\n"
+        "12.4 Another Entry .......... 90"
+    )
+    assert normalize_toc_text(source) == "\n".join(
+        [
+            "12.3 An Extremely Long Description Of Some Peripheral Register .......... 88",
+            "12.4 Another Entry .......... 90",
+        ]
+    )
+
+
+def _plain_table(rows: list[list[str]], x0=10.0, x1=80.0, y0=20.0, y1=60.0) -> Table:
+    grid = [
+        [Cell(row=r, col=c, text=text, bbox=BBox(x0, y0, x1, y1)) for c, text in enumerate(row)]
+        for r, row in enumerate(rows)
+    ]
+    return Table(
+        rows=grid,
+        n_rows=len(grid),
+        n_cols=len(rows[0]),
+        bbox=BBox(x0, y0, x1, y1),
+        validated=True,
+    )
+
+
+def _page_with_table(page_number: int, table: Table, lead: list | None = None) -> PageIR:
+    blocks = list(lead or []) + [TableBlock(table=table, bbox=table.bbox)]
+    return PageIR(page_number, 595.0, 842.0, blocks=blocks, body_font_size=9.0)
+
+
+def test_cross_page_stitch_merges_matching_table_across_pages() -> None:
+    header = ["名称", "类型"]
+    page_one = _page_with_table(1, _plain_table([header, ["IOA0", "I/O"], ["IOA1", "I/O"]]))
+    page_two = _page_with_table(2, _plain_table([header, ["IOB0", "I/O"], ["IOB1", "I/O"]]))
+    stitch_cross_page_tables([page_one, page_two])
+    assert page_one.blocks[0].source_pages == [1, 2]
+    assert page_one.blocks[0].table.n_rows == 5  # header + 4 data rows
+    assert page_two.blocks == []  # fully absorbed
+    assert page_one.blocks[0].table.text_rows() == [
+        ["名称", "类型"],
+        ["IOA0", "I/O"],
+        ["IOA1", "I/O"],
+        ["IOB0", "I/O"],
+        ["IOB1", "I/O"],
+    ]
+
+
+def test_cross_page_stitch_chains_across_three_pages() -> None:
+    header = ["符号", "说明"]
+    pages = [
+        _page_with_table(
+            11,
+            _plain_table([header, ["A", "x"]]),
+            lead=[TextBlock("paragraph", "表1", BBox(0, 0, 100, 14))],
+        ),
+        _page_with_table(12, _plain_table([header, ["B", "y"]])),
+        _page_with_table(13, _plain_table([header, ["C", "z"]])),
+    ]
+    stitch_cross_page_tables(pages)
+    merged = pages[0].blocks[-1]
+    assert merged.source_pages == [11, 12, 13]
+    assert merged.table.n_rows == 4  # header + A/B/C
+    assert [row[0] for row in merged.table.text_rows()] == ["符号", "A", "B", "C"]
+    assert pages[1].blocks == []
+    assert pages[2].blocks == []
+
+
+def test_cross_page_stitch_refuses_when_table_is_not_first_body_block() -> None:
+    # A heading before page 2's table means it is a fresh table, not a continuation.
+    header = ["名称", "类型"]
+    page_one = _page_with_table(1, _plain_table([header, ["IOA0", "I/O"]]))
+    page_two = _page_with_table(
+        2,
+        _plain_table([header, ["IOB0", "I/O"]]),
+        lead=[TextBlock("heading", "11.1 概述", BBox(0, 0, 100, 30))],
+    )
+    stitch_cross_page_tables([page_one, page_two])
+    assert page_one.blocks[0].source_pages is None
+    assert page_one.blocks[0].table.n_rows == 2
+    assert len(page_two.blocks) == 2  # not absorbed
+
+
+def test_cross_page_stitch_refuses_when_header_differs() -> None:
+    page_one = _page_with_table(1, _plain_table([["名称", "类型"], ["IOA0", "I/O"]]))
+    page_two = _page_with_table(2, _plain_table([["符号", "参数"], ["IDD", "mA"]]))
+    stitch_cross_page_tables([page_one, page_two])
+    assert page_one.blocks[0].source_pages is None
+    assert page_one.blocks[0].table.n_rows == 2
+    assert len(page_two.blocks) == 1
+
+
 @pytest.mark.skipif(
     not os.environ.get("RAG_PARSER_FIXTURE_PDF") or not os.environ.get("RAG_PARSER_FIXTURE_LAYOUT"),
     reason="local licensed PDF fixture is not configured",
@@ -807,12 +1037,14 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
         os.environ["RAG_PARSER_FIXTURE_PDF"],
         os.environ["RAG_PARSER_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[6, 7, 8, 14, 15, 47, 49, 54, 57, 64, 65, 71, 76],
+        pages=[6, 7, 8, 9, 10, 14, 15, 47, 49, 54, 57, 64, 65, 71, 76],
     )
     assert summary["quality"]["orphan_text_lines"] == 0
     assert summary["quality"]["duplicate_owned_lines"] == 0
     assert summary["quality"]["missing_snapshot_files"] == []
     assert summary["table_snapshot_candidates"] == summary["table_snapshots"]
+    assert summary["implicit_subtable_groups"] == 14
+    assert summary["implicit_subrows"] == 48
 
     pages = {
         page["page"]: page
@@ -826,12 +1058,8 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
     )
     assert "masses-chip.com" not in all_text
 
-    page7_snapshots = [
-        block for block in pages[7]["blocks"] if block["type"] == "snapshot"
-    ]
-    page8_snapshots = [
-        block for block in pages[8]["blocks"] if block["type"] == "snapshot"
-    ]
+    page7_snapshots = [block for block in pages[7]["blocks"] if block["type"] == "snapshot"]
+    page8_snapshots = [block for block in pages[8]["blocks"] if block["type"] == "snapshot"]
     assert len(page7_snapshots) == 2
     assert len(page8_snapshots) == 2
     assert page7_snapshots[0]["bbox"][0] <= 104.0
@@ -840,6 +1068,14 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
     assert page8_snapshots[0]["bbox"][2] >= 502.0
     assert all("M8P6272" in block["annotations"] for block in page7_snapshots)
     assert all("M8P6272" in block["annotations"] for block in page8_snapshots)
+
+    first_pin_table = _table(pages[9], 16, 3)
+    assert first_pin_table["source_pages"] == [9, 10]
+    assert first_pin_table["semantic_reconstruction"]["parent_rows"] == list(range(2, 16))
+    assert ["IOA6", "I/O", "输入/输出IO，SMT，上拉电阻，变换中断唤醒"] in first_pin_table[
+        "semantic_rows"
+    ]
+    assert ["PWM13", "O", "PWM13 输出"] in first_pin_table["semantic_rows"]
 
     page6 = [block.get("text") for block in pages[6]["blocks"] if block["type"] == "text"]
     assert page6.index("■ 系统工作模式") < page6.index("● 普通模式")
@@ -867,17 +1103,19 @@ def test_m8p6272_regression_pages(tmp_path: Path) -> None:
         if block["type"] == "text"
     )
     assert _table_shapes(pages[57]) == [(16, 6)]
-    assert _table_shapes(pages[64]) == [(13, 8)]
+    # pages 64/65 electrical-characteristics table is stitched into one table.
+    assert _table_shapes(pages[64]) == [(31, 8)]
     page65_tables = [block for block in pages[65]["blocks"] if block["type"] == "table"]
-    assert [(table["n_rows"], table["n_cols"]) for table in page65_tables] == [(20, 8), (15, 7)]
-    electrical_table = page65_tables[0]
+    assert [(table["n_rows"], table["n_cols"]) for table in page65_tables] == [(15, 7)]
+    electrical_table = _table(pages[64], 31, 8)
+    assert electrical_table["source_pages"] == [64, 65]
     assert _cell(electrical_table, 0, 7)["rowspan"] == 2
     assert _cell(electrical_table, 0, 7)["text"].replace(" ", "") == "单位"
     assert [
         (cell["row"], cell["rowspan"], cell["text"])
         for cell in electrical_table["cells"]
         if cell["col"] == 7 and cell["row"] >= 10
-    ] == [(10, 2, "kΩ"), (12, 2, "kΩ"), (14, 6, "mA")]
+    ] == [(11, 2, "uA"), (13, 8, ""), (21, 2, "kΩ"), (23, 2, "kΩ"), (25, 6, "mA")]
     package_table = next(block for block in pages[71]["blocks"] if block["type"] == "table")
     assert package_table["rows"][0] == ["符号", "单位（mm）", "", ""]
     assert package_table["rows"][1] == ["", "最小", "正常", "最大"]
@@ -909,18 +1147,25 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
         os.environ["RAG_PARSER_M9_FIXTURE_PDF"],
         os.environ["RAG_PARSER_M9_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[9, 10, 24, 28, 72, 100, 122, 126, 135, 136],
+        pages=[9, 10, 11, 12, 13, 24, 28, 41, 72, 100, 119, 122, 126, 134, 135, 136],
     )
     pages = {
         page["page"]: page
         for page in json.loads((tmp_path / "pages.json").read_text(encoding="utf-8"))
     }
-    page9_snapshots = [
-        block for block in pages[9]["blocks"] if block["type"] == "snapshot"
-    ]
-    page10_snapshots = [
-        block for block in pages[10]["blocks"] if block["type"] == "snapshot"
-    ]
+    assert sum(page["stats"]["implicit_subtable_groups"] for page in pages.values()) == 18
+    assert sum(page["stats"]["implicit_subrows"] for page in pages.values()) == 78
+    # pages 11/12/13 pin table is stitched into one table.
+    first_pin_table = _table(pages[11], 20, 3)
+    assert first_pin_table["source_pages"] == [11, 12, 13]
+    assert ["VREF", "A", "AD 外部参考电压输入"] in first_pin_table["semantic_rows"]
+    assert ["INT1", "I", "外部中断1"] in first_pin_table["semantic_rows"]
+    wrapped_header_table = _table(pages[119], 9, 8)
+    assert "semantic_rows" not in wrapped_header_table
+    assert pages[41]["stats"]["implicit_subtable_groups"] == 0
+    assert pages[134]["stats"]["implicit_subtable_groups"] == 0
+    page9_snapshots = [block for block in pages[9]["blocks"] if block["type"] == "snapshot"]
+    page10_snapshots = [block for block in pages[10]["blocks"] if block["type"] == "snapshot"]
     assert len(page9_snapshots) == 2
     assert len(page10_snapshots) == 1
     assert page9_snapshots[0]["bbox"][0] <= 97.0
@@ -928,9 +1173,7 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
     assert page10_snapshots[0]["bbox"][0] <= 79.0
     assert page10_snapshots[0]["bbox"][2] >= 478.0
 
-    page72_snapshots = [
-        block for block in pages[72]["blocks"] if block["type"] == "snapshot"
-    ]
+    page72_snapshots = [block for block in pages[72]["blocks"] if block["type"] == "snapshot"]
     assert len(page72_snapshots) == 2
     assert page72_snapshots[1]["source"] == "native_visual"
     assert page72_snapshots[1]["bbox"][0] <= 64.0
@@ -981,7 +1224,9 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
         (10, "晶振驱动选择:高驱动 供电选择:BIAS 供电"),
     ]
 
-    first_instruction_table = _table(pages[135], 37, 6)
+    # pages 135/136 instruction table is stitched into one table.
+    first_instruction_table = _table(pages[135], 73, 6)
+    assert first_instruction_table["source_pages"] == [135, 136]
     assert [
         (
             _cell(first_instruction_table, row, 0)["rowspan"],
@@ -989,13 +1234,12 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
         )
         for row in (1, 32)
     ] == [(31, "字 节 操 作 类 指 令"), (5, "位操作 指令")]
-    second_instruction_table = _table(pages[136], 37, 6)
     assert [
         (
-            _cell(second_instruction_table, row, 0)["rowspan"],
-            _cell(second_instruction_table, row, 0)["text"],
+            _cell(first_instruction_table, row, 0)["rowspan"],
+            _cell(first_instruction_table, row, 0)["text"],
         )
-        for row in (1, 23, 32)
+        for row in (37, 59, 68)
     ] == [
         (22, "控 制 操 作 类 指 令"),
         (9, "立 即 数 操 作 指 令"),
@@ -1014,20 +1258,37 @@ def test_m9f6820_table_and_heading_regression(tmp_path: Path) -> None:
     reason="local licensed M8P5170 PDF fixture is not configured",
 )
 def test_m8p5170_visual_and_table_regression(tmp_path: Path) -> None:
-    _run(
+    summary = _run(
         os.environ["RAG_PARSER_M8P5170_FIXTURE_PDF"],
         os.environ["RAG_PARSER_M8P5170_FIXTURE_LAYOUT"],
         tmp_path,
-        pages=[7, 27, 28, 39, 40, 41],
+        pages=[7, 8, 12, 27, 28, 39, 40, 41],
     )
     pages = {
         page["page"]: page
         for page in json.loads((tmp_path / "pages.json").read_text(encoding="utf-8"))
     }
+    assert summary["implicit_subtable_groups"] == 6
+    assert summary["implicit_subrows"] == 24
 
-    pin_snapshots = [
-        block for block in pages[7]["blocks"] if block["type"] == "snapshot"
+    pin_table = _table(pages[8], 8, 3)
+    assert pin_table["rows"][4] == [
+        "IOA[2] TK2 PWM02 CP VREF",
+        "I/O A O A A",
+        "输入/输出IO、SMT、上拉电阻 触摸按键通道2 PWM02 输出端口 "
+        "LVD 外部电压输入口 AD 外部参考电压输入",
     ]
+    assert pin_table["semantic_reconstruction"]["parent_rows"] == [2, 3, 4, 5, 6, 7]
+    assert len(pin_table["semantic_rows"]) == 26
+    assert ["CP", "A", "LVD 外部电压输入口"] in pin_table["semantic_rows"]
+    assert ["VREF", "A", "AD 外部参考电压输入"] in pin_table["semantic_rows"]
+    assert len(pin_table["semantic_reconstruction"]["row_provenance"]) == 24
+    assert pages[12]["stats"]["implicit_subtable_groups"] == 0
+    markdown = (tmp_path / "md" / "full.md").read_text(encoding="utf-8")
+    assert "| CP | A | LVD 外部电压输入口 |" in markdown
+    assert "| IOA[2] TK2 PWM02 CP VREF |" not in markdown
+
+    pin_snapshots = [block for block in pages[7]["blocks"] if block["type"] == "snapshot"]
     assert len(pin_snapshots) == 3
     assert pin_snapshots[0]["source"] == "native_visual"
     assert pin_snapshots[0]["bbox"][0] <= 94.0
@@ -1062,20 +1323,23 @@ def test_m8p5170_visual_and_table_regression(tmp_path: Path) -> None:
         (3, "仿真电压 选择"),
     ]
 
-    page40 = _table(pages[40], 13, 8)
+    # pages 40/41 electrical-characteristics table is stitched into one table.
+    page40 = _table(pages[40], 25, 8)
+    assert page40["source_pages"] == [40, 41]
     assert [
         (cell["row"], cell["rowspan"], cell["text"])
         for cell in page40["cells"]
         if cell["col"] == 7 and cell["row"] >= 2
-    ] == [(2, 1, "V"), (3, 2, "mA"), (5, 6, "uA"), (11, 2, "uA")]
+    ] == [
+        (2, 1, "V"),
+        (3, 2, "mA"),
+        (5, 6, "uA"),
+        (11, 2, "uA"),
+        (13, 2, "kΩ"),
+        (15, 2, "kΩ"),
+        (17, 8, "mA"),
+    ]
     assert [_cell(page40, row, 3)["rowspan"] for row in (3, 5, 7, 9, 11)] == [2] * 5
-
-    page41 = _table(pages[41], 14, 8)
-    assert [
-        (cell["row"], cell["rowspan"], cell["text"])
-        for cell in page41["cells"]
-        if cell["col"] == 7 and cell["row"] >= 2
-    ] == [(2, 2, "kΩ"), (4, 2, "kΩ"), (6, 8, "mA")]
 
 
 def _table_shapes(page: dict) -> list[tuple[int, int]]:
