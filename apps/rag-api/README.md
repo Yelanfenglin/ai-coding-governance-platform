@@ -6,14 +6,19 @@
 
 ```text
 app/parser/                 PDF 原生层 + DocLayout anchor + 结构后处理
+app/chunking/               语义单元重建 + structure-aware chunk 生成（loader/units/chunker/metadata）
 scripts/pp_doclayout_all.py PP-DocLayoutV3 批处理与断点续跑
 scripts/audit_reconstruction.py 解析产物不变量审计
+scripts/audit_chunks.py     chunk 统计与不变量验收（Step 4）
 tests/test_parser.py        单元测试与可选的本地 PDF 回归
+tests/test_chunking.py      chunk 层单元测试
+docs/chunk-strategy.md      chunk 分块规划（v1 基线）
 docs/parser-pipeline.md     完整解析流程与处理技巧
 docs/rag-experience.md      RAG 链路经验库：文档解析问题、根因与解决方案
 docs/parser-visual-audit.md 表格/快照人工视觉审计基线
 artifacts/                  本地版面模型产物，不提交
 storage/parsed/             本地解析结果，不提交
+storage/chunks/             chunk 层产物（chunks.jsonl），不提交
 ```
 
 旧版 `parser_v0` 和 `parser_v1_minimal` 已收敛为唯一入口 `app.parser`。解析代码不依赖 PostgreSQL、Milvus 或外部 LLM。
@@ -40,6 +45,7 @@ Phase 2 的 PostgreSQL、Milvus、embedding、chunking 和 API 只保留在设�
 
 ## 文档
 
+- [Chunk 分块规划（v1 基线）](docs/chunk-strategy.md) —— 语义单元模型、按内容类型的切块规则、语义 overlap、metadata 三级字段与验收统计。
 - [解析管线：完整流程与处理技巧](docs/parser-pipeline.md) —— 各阶段的职责、关键技术与“几何优先、词表禁用”的泛化约束。
 - [RAG 链路经验（当前：文档解析）](docs/rag-experience.md) —— 双栏顺序、rowspan 误吞整列、表格/图分类误判、字符级跨格分配、跨页拼接、目录重建等 20 余个问题的复盘与一句话对策速查；后续 chunking、检索等阶段经验将陆续补入。
 - [PDF 表格视觉审计基线](docs/parser-visual-audit.md) —— 人工逐页核对的表格/快照真值计数与逐格 A/B 结果。
