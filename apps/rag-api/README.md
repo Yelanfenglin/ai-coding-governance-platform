@@ -9,6 +9,9 @@ app/parser/                 PDF 原生层 + DocLayout anchor + 结构后处理
 scripts/pp_doclayout_all.py PP-DocLayoutV3 批处理与断点续跑
 scripts/audit_reconstruction.py 解析产物不变量审计
 tests/test_parser.py        单元测试与可选的本地 PDF 回归
+docs/parser-pipeline.md     完整解析流程与处理技巧
+docs/rag-experience.md      RAG 链路经验库：文档解析问题、根因与解决方案
+docs/parser-visual-audit.md 表格/快照人工视觉审计基线
 artifacts/                  本地版面模型产物，不提交
 storage/parsed/             本地解析结果，不提交
 ```
@@ -34,6 +37,12 @@ Phase 2 的 PostgreSQL、Milvus、embedding、chunking 和 API 只保留在设�
 表内无边框子记录不交给 chunker 二次猜测。解析器保留 outer `rows/cells` 作为保真视图，仅当多个相邻正文行在所有列中具有相同物理行数、跨列基线对齐、行宽留白充分且该模式重复出现时，才额外生成规范化 `semantic_rows`。单个多行 cell、表头换行和普通段落折行保持原样；规则不读取标题词义、引脚名或任何芯片字段。
 
 视觉区域不再直接照搬轻量模型 bbox。孤立图可向原生图元和同带标签扩展；并排或上下相邻的图以 anchor 中线隔离；已有正文/图题 anchor 构成边界，避免正文被截图吞掉。模型完全漏掉的向量图还需同时满足多图元连通、二维尺寸、局部文字密度和已有排他区域不重叠，生产规则不读取文档名、页码、标题词义或芯片字段。
+
+## 文档
+
+- [解析管线：完整流程与处理技巧](docs/parser-pipeline.md) —— 各阶段的职责、关键技术与“几何优先、词表禁用”的泛化约束。
+- [RAG 链路经验（当前：文档解析）](docs/rag-experience.md) —— 双栏顺序、rowspan 误吞整列、表格/图分类误判、字符级跨格分配、跨页拼接、目录重建等 20 余个问题的复盘与一句话对策速查；后续 chunking、检索等阶段经验将陆续补入。
+- [PDF 表格视觉审计基线](docs/parser-visual-audit.md) —— 人工逐页核对的表格/快照真值计数与逐格 A/B 结果。
 
 ## 运行
 
