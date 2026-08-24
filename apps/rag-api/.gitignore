@@ -1,0 +1,27 @@
+# rag-api 本地运行产物，禁止提交
+.env
+.env.*
+!.env.example
+
+# 图片资源 / 上传 / 解析缓存
+storage/
+uploads/
+artifacts/
+*.pdf
+*.paddlex
+.tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE / 测试
+.idea/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
