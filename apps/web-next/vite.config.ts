@@ -6,14 +6,11 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     proxy: {
-      "/auth": "http://127.0.0.1:8081",
-      "/pairing-codes": "http://127.0.0.1:8081",
-      "/devices": "http://127.0.0.1:8081",
-      "/projects": "http://127.0.0.1:8081",
-      "/conversations": "http://127.0.0.1:8081",
-      "/tasks": "http://127.0.0.1:8081",
-      "/approvals": "http://127.0.0.1:8081",
-      "/v1": "http://127.0.0.1:8081",
+      "/api/agent": {
+        target: process.env.AGENT_API_URL ?? "http://127.0.0.1:8081",
+        // Keep the browser origin/Host pair intact for the local Agent's same-origin check.
+        changeOrigin: false,
+      },
     },
   },
 });

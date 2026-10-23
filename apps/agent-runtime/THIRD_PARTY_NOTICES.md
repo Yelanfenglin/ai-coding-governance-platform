@@ -7,8 +7,7 @@ descriptions retain the original English text.
 Workspace state ownership also references Pi's cwd-scoped session directory at
 commit `cae9fd28a2d3d515c83ea495093e3768cc8efab6`. Shared nested usage references
 OpenAI Agents SDK `Agent.as_tool` at commit `841dfdd938bfd4ca052475eb76d6245a356868e0`.
-These references do not introduce either runtime as a dependency. Source mappings
-and intentional adaptations are listed in `docs/source-alignment-agent-delivery.md`.
+These references do not introduce either runtime as a dependency.
 
 MIT License
 

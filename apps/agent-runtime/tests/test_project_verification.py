@@ -49,7 +49,8 @@ async def test_independent_failure_reaches_model_then_repair_and_recheck(
             self.requests.append(request)
             step = len(self.requests)
             if step == 1:
-                assert request.messages[-1].content == question
+                assert request.messages[-1].content.startswith(question + "\n\n[实现依据]")
+                assert "record_implementation" in request.messages[-1].content
                 call = ToolCall("check1", "run_command", {"command": command})
             elif step == 2:
                 observation = json.loads(request.messages[-1].content)

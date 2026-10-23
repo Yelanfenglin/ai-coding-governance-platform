@@ -1,31 +1,26 @@
 import { defineStore } from "pinia";
 import { apiRequest } from "../api";
+import type { TaskRecord } from "./task";
 
 export interface ProjectRecord {
   id: string;
-  device_id: string;
-  root_id: string;
   display_name: string;
-}
-
-export interface DeviceRecord {
-  id: string;
-  name: string;
-  runtime_version: string | null;
-  last_seen_at: string | null;
-  online: boolean;
-  projects: ProjectRecord[];
+  path: string;
+  model: string;
+  product: string | null;
+  version: string | null;
 }
 
 export interface ConversationRecord {
   id: string;
+  project_id: string;
   title: string;
   created_at: string;
 }
 
 export const useResourceStore = defineStore("resources", {
   state: () => ({
-    devices: [] as DeviceRecord[],
+    projects: [] as ProjectRecord[],
     conversations: [] as ConversationRecord[],
     loading: false,
   }),
@@ -33,26 +28,23 @@ export const useResourceStore = defineStore("resources", {
     async load() {
       this.loading = true;
       try {
-        [this.devices, this.conversations] = await Promise.all([
-          apiRequest<DeviceRecord[]>("/devices"),
+        [this.projects, this.conversations] = await Promise.all([
+          apiRequest<ProjectRecord[]>("/projects"),
           apiRequest<ConversationRecord[]>("/conversations"),
         ]);
       } finally {
         this.loading = false;
       }
     },
-    async createConversation(title: string) {
+    async createConversation(title: string, projectId: string) {
       const conversation = await apiRequest<ConversationRecord>("/conversations", {
-        method: "POST",
-        body: JSON.stringify({ title }),
+        method: "POST", body: JSON.stringify({ title, project_id: projectId }),
       });
       this.conversations.unshift(conversation);
       return conversation;
     },
-    async createPairingCode() {
-      return apiRequest<{ code: string; expires_at: string }>("/pairing-codes", {
-        method: "POST",
-      });
+    async history(identifier: string) {
+      return apiRequest<ConversationRecord & { tasks: TaskRecord[] }>(`/conversations/${identifier}`);
     },
   },
 });

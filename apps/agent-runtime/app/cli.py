@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -210,7 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_once(args: argparse.Namespace) -> int:
+async def run_once(
+    args: argparse.Namespace, *,
+    event_sink: Callable[[object], None] | None = None,
+    result_sink: Callable[[dict, int], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
+    console: bool = True,
+) -> int:
     if not args.question:
         print("a question is required", file=sys.stderr)
         return EXIT_FAILED
@@ -328,7 +335,13 @@ async def run_once(args: argparse.Namespace) -> int:
     history: list[Message] = []
     if session is not None and not args.no_history:
         history = await session.load_messages()
+    delivery = (
+        DeliveryRecorder(selected, args.delivery_dir, state_dir=state_dir)
+        if args.delivery_dir else None
+    )
     extra_prompt = workspace_prompt(selected) if workspace else ""
+    if delivery is not None and delivery.implementation is not None:
+        registry.register(delivery.implementation.tool())
     if module_project:
         extra_prompt += "\n\n" + skill_prompt()
     subagents = None
@@ -380,6 +393,17 @@ async def run_once(args: argparse.Namespace) -> int:
             "this CLI closes unfinished children on return, it is not a background daemon."
         )
     input_question = args.question
+    if delivery is not None and delivery.implementation is not None:
+        # Per-turn guidance also reaches sessions created before this tool existed.
+        input_question += (
+            "\n\n[实现依据] 工程修改并检查后，用 record_implementation 批量记录关键实现："
+            "需求、配置理由、实际源码行、已取得的规格引用和检查调用。解释由你提供，"
+            "宿主核对定位与执行记录；未验证事项明确列出。只记录本轮实际工作，不为凑记录"
+            "重复检索或检查。没有工程修改时按需使用。"
+            "规格明确给出的事实与基于前提的计算、推导分开表述，不把推导写成手册明文。"
+            "最终答复按本轮工具输出说明实际检查：主机编译、行为模拟、厂商编译和板卡实测"
+            "分别描述，不沿用旧清单的验证级别，也不遗漏已执行的检查。"
+        )
     if verification is not None:
         input_question += (
             "\n\n[宿主验收] 本轮已配置 verify_project，修改后调用它。失败时根据实际输出修复"
@@ -399,17 +423,14 @@ async def run_once(args: argparse.Namespace) -> int:
                 await session.append(MessageEntry(0, 0, head, _now()))
         await session.append(MessageEntry(0, 0, user_message(input_question), _now()))
 
-    delivery = (
-        DeliveryRecorder(selected, args.delivery_dir, state_dir=state_dir)
-        if args.delivery_dir else None
-    )
-
     def on_event(event: object) -> None:
         nonlocal memory_recalled
         if delivery is not None:
             delivery.observe(event)
+        if event_sink is not None:
+            event_sink(event)
         if isinstance(event, AssistantTextDelta):
-            if not args.json:
+            if console and not args.json:
                 sys.stdout.write(event.text)
                 sys.stdout.flush()
         elif isinstance(event, AssistantTurnEvent):
@@ -453,6 +474,7 @@ async def run_once(args: argparse.Namespace) -> int:
                 if args.max_steps is not None or args.max_seconds is not None
                 else None
             ),
+            cancel_event=cancel_event,
             on_event=on_event,
         ))
     finally:
@@ -535,7 +557,9 @@ async def run_once(args: argparse.Namespace) -> int:
         )
         response["delivery"] = str(path)
 
-    if args.json:
+    if result_sink is not None:
+        result_sink(response, exit_code)
+    if console and args.json:
         print(
             json.dumps(
                 response,
@@ -543,7 +567,7 @@ async def run_once(args: argparse.Namespace) -> int:
                 indent=2,
             )
         )
-    elif result.status != "completed":
+    elif console and result.status != "completed":
         print(f"\n[{result.status}] {result.error or ''}", file=sys.stderr)
 
     return exit_code

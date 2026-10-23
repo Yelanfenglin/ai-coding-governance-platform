@@ -69,7 +69,7 @@ class ProjectVerification:
     def tool(self) -> FunctionTool:
         async def check(args, context):
             row = await self.run(phase="development")
-            return result(row, error=not row["passed"])
+            return result({**row, "check_call_id": context.tool_call_id}, error=not row["passed"])
 
         return FunctionTool(
             "verify_project",

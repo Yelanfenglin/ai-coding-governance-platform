@@ -4,11 +4,14 @@
   "version": "0.1.0",
   "workspaces": ["apps/*"],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @platform/api\" \"npm run dev -w @platform/web\"",
-    "build": "npm run build -w @platform/web && npm run build -w @platform/api",
-    "start": "npm run start -w @platform/api",
-    "test": "npm run test -w @platform/api",
-    "init-admin": "npm run init-admin -w @platform/api"
+    "dev": "concurrently -n agent,web -c blue,magenta \"npm run dev:agent\" \"npm run dev -w @platform/web-next\"",
+    "dev:agent": "cd apps/agent-runtime && set PYTHONNOUSERSITE=1&& .venv\\Scripts\\python.exe -m app.web --env-file .env",
+    "build": "npm run build -w @platform/web-next",
+    "start": "npm run dev:agent",
+    "test": "npm run test:agent && npm run test:web",
+    "test:agent": "cd apps/agent-runtime && set PYTHONNOUSERSITE=1&& .venv\\Scripts\\python.exe -m pytest -q",
+    "test:web": "npm test -w @platform/web-next",
+    "test:e2e": "npm run test:e2e -w @platform/web-next"
   },
   "devDependencies": { "concurrently": "^9.1.2" }
 }

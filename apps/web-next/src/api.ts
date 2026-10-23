@@ -1,4 +1,4 @@
-const configuredBase = import.meta.env.VITE_API_BASE_URL ?? "";
+const configuredBase = import.meta.env.VITE_API_BASE_URL ?? "/api/agent";
 export const apiBase = configuredBase.replace(/\/$/, "");
 
 export class ApiError extends Error {

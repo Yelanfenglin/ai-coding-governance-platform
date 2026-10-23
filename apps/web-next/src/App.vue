@@ -3,8 +3,5 @@ import { RouterView } from "vue-router";
 </script>
 
 <template>
-  <NConfigProvider>
-    <NGlobalStyle />
-    <RouterView />
-  </NConfigProvider>
+  <RouterView />
 </template>

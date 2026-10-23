@@ -1,234 +1,635 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
-import { useSessionStore } from "../stores/session";
-import { useTaskStore } from "../stores/task";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
+import { useTaskStore, type TaskRecord } from "../stores/task";
 import { useResourceStore } from "../stores/resources";
+import {
+  toolActivities,
+  toolLabel,
+  verificationLabel,
+} from "../utils/presentation";
+import AppIcon from "../components/AppIcon.vue";
+import MarkdownContent from "../components/MarkdownContent.vue";
+import ExecutionTrace from "../components/ExecutionTrace.vue";
+import HistoryTrace from "../components/HistoryTrace.vue";
+import DeliveryPanel from "../components/DeliveryPanel.vue";
 
-const session = useSessionStore();
 const task = useTaskStore();
 const resources = useResourceStore();
-const router = useRouter();
-const deviceId = ref("");
 const projectId = ref("");
 const conversationId = ref("");
 const prompt = ref("");
+const currentPrompt = ref("");
 const submitting = ref(false);
+const loadingHistory = ref(false);
 const formError = ref("");
-const pairingCode = ref("");
-const pairingExpiresAt = ref("");
-const conversationTitle = ref("");
-const deviceOptions = computed(() =>
-  resources.devices.map((device) => ({
-    label: `${device.name}${device.online ? "（在线）" : "（离线）"}`,
-    value: device.id,
-  })),
+const history = ref<TaskRecord[]>([]);
+const sidebarOpen = ref(false);
+const inspectorOpen = ref(false);
+const reviewTab = ref("changes");
+const search = ref("");
+const copied = ref(false);
+const transcript = ref<HTMLElement>();
+const input = ref<HTMLTextAreaElement>();
+const followBottom = ref(true);
+const project = computed(() =>
+  resources.projects.find((item) => item.id === projectId.value),
 );
-const selectedDevice = computed(() =>
-  resources.devices.find((device) => device.id === deviceId.value),
+const conversation = computed(() =>
+  resources.conversations.find((item) => item.id === conversationId.value),
 );
-const projectOptions = computed(() =>
-  (selectedDevice.value?.projects ?? []).map((project) => ({
-    label: project.display_name,
-    value: project.id,
-  })),
+const conversations = computed(() =>
+  resources.conversations.filter(
+    (item) =>
+      item.project_id === projectId.value &&
+      item.title.toLowerCase().includes(search.value.toLowerCase()),
+  ),
 );
-const conversationOptions = computed(() =>
-  resources.conversations.map((conversation) => ({
-    label: conversation.title,
-    value: conversation.id,
-  })),
+const earlier = computed(() =>
+  history.value.filter((item) => item.id !== task.taskId),
 );
-const canSubmit = computed(
+const hasConversation = computed(
+  () => earlier.value.length > 0 || !!currentPrompt.value,
+);
+const canSend = computed(
   () =>
-    deviceId.value.trim() &&
-    projectId.value.trim() &&
-    conversationId.value.trim() &&
-    prompt.value.trim(),
+    !!projectId.value &&
+    !!prompt.value.trim() &&
+    !task.active &&
+    !submitting.value &&
+    !loadingHistory.value,
 );
-const statusType = computed(() => {
-  if (task.state === "failed") return "error";
-  if (task.state === "completed") return "success";
-  if (task.state === "waiting_approval") return "warning";
-  return "info";
-});
+const tools = computed(() => toolActivities(task.events, task.active));
+const currentTool = computed(() =>
+  tools.value.find((item) => item.status === "running"),
+);
+const statusLabels = {
+  idle: "就绪",
+  pending: "等待执行",
+  running: "执行中",
+  cancelling: "正在取消",
+  completed: "执行完成",
+  failed: "执行失败",
+  cancelled: "已取消",
+  budget_exceeded: "预算耗尽",
+};
+const activityLabel = computed(() =>
+  task.state === "cancelling"
+    ? "正在取消，请稍候"
+    : currentTool.value
+      ? toolLabel(currentTool.value.name)
+      : task.answer
+        ? "正在整理答复与交付"
+        : "正在分析需求",
+);
+const quickStarts = [
+  {
+    icon: "code",
+    title: "实现一个模块",
+    description: "从需求到当前工程里的代码",
+    prompt:
+      "先读取当前工程结构与目标芯片信息，和我确认需求后，再实现一个可复用的外设模块。",
+  },
+  {
+    icon: "book",
+    title: "查阅规格依据",
+    description: "带上型号、版本与原文定位",
+    prompt:
+      "先确认当前工程的目标型号，再检索规格书，解释相关寄存器配置，并保留可追溯的依据。",
+  },
+  {
+    icon: "check",
+    title: "检查现有工程",
+    description: "核对配置、接入与资源使用",
+    prompt:
+      "检查现有工程的模块接入与资源分配，先报告发现的问题，与我确认后再修改。",
+  },
+];
 
+function showError(reason: unknown) {
+  formError.value = reason instanceof Error ? reason.message : "请求失败";
+}
+function trackScroll() {
+  const area = transcript.value;
+  if (area)
+    followBottom.value =
+      area.scrollHeight - area.scrollTop - area.clientHeight < 100;
+}
+async function scrollToBottom() {
+  await nextTick();
+  if (followBottom.value && transcript.value)
+    transcript.value.scrollTop = transcript.value.scrollHeight;
+}
+function resizeInput() {
+  if (!input.value) return;
+  input.value.style.height = "auto";
+  input.value.style.height = `${Math.min(input.value.scrollHeight, 180)}px`;
+}
+function newConversation() {
+  if (task.active || submitting.value) return;
+  conversationId.value = "";
+  loadingHistory.value = false;
+  task.reset();
+  history.value = [];
+  currentPrompt.value = "";
+  prompt.value = "";
+  formError.value = "";
+  inspectorOpen.value = false;
+  sidebarOpen.value = false;
+  localStorage.removeItem("agent-conversation");
+  void nextTick(() => {
+    resizeInput();
+    input.value?.focus();
+  });
+}
+async function selectConversation(identifier: string) {
+  if (task.active || submitting.value) return;
+  conversationId.value = identifier;
+  sidebarOpen.value = false;
+  task.reset();
+  history.value = [];
+  currentPrompt.value = "";
+  prompt.value = "";
+  formError.value = "";
+  followBottom.value = true;
+  loadingHistory.value = true;
+  try {
+    const detail = await resources.history(identifier);
+    if (conversationId.value !== identifier) return;
+    history.value = detail.tasks;
+    const latest = detail.tasks.at(-1);
+    if (latest) {
+      currentPrompt.value = latest.prompt;
+      task.attach(latest);
+    }
+    localStorage.setItem("agent-conversation", identifier);
+    await scrollToBottom();
+  } catch (reason) {
+    if (conversationId.value === identifier) showError(reason);
+  } finally {
+    if (conversationId.value === identifier) loadingHistory.value = false;
+  }
+}
 async function start() {
+  if (!canSend.value) return;
   submitting.value = true;
   formError.value = "";
+  const question = prompt.value.trim();
   try {
-    await task.create({
-      deviceId: deviceId.value.trim(),
-      projectId: projectId.value.trim(),
-      conversationId: conversationId.value.trim(),
-      prompt: prompt.value.trim(),
-    });
+    if (!conversationId.value) {
+      const record = await resources.createConversation(
+        question.slice(0, 28),
+        projectId.value,
+      );
+      conversationId.value = record.id;
+      localStorage.setItem("agent-conversation", record.id);
+    }
+    await task.create(conversationId.value, question);
+    currentPrompt.value = question;
+    prompt.value = "";
+    copied.value = false;
+    followBottom.value = true;
+    await nextTick();
+    resizeInput();
+    await scrollToBottom();
   } catch (reason) {
-    task.state = "failed";
-    formError.value = reason instanceof Error ? reason.message : "任务创建失败";
+    showError(reason);
   } finally {
     submitting.value = false;
   }
 }
-
-async function logout() {
-  await session.logout();
-  task.disconnect();
-  await router.push("/login");
+function onKeydown(event: KeyboardEvent) {
+  if (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.isComposing &&
+    event.keyCode !== 229
+  ) {
+    event.preventDefault();
+    void start();
+  }
 }
-
-async function createConversation() {
-  const title = conversationTitle.value.trim() || "新会话";
+async function cancel() {
   try {
-    const conversation = await resources.createConversation(title);
-    conversationId.value = conversation.id;
-    conversationTitle.value = "";
+    await task.cancel();
   } catch (reason) {
-    formError.value = reason instanceof Error ? reason.message : "会话创建失败";
+    showError(reason);
   }
 }
-
-async function createPairingCode() {
+function useQuickStart(value: string) {
+  prompt.value = value;
+  void nextTick(() => {
+    resizeInput();
+    input.value?.focus();
+  });
+}
+async function copyAnswer() {
   try {
-    const result = await resources.createPairingCode();
-    pairingCode.value = result.code;
-    pairingExpiresAt.value = result.expires_at;
+    await navigator.clipboard.writeText(task.answer);
+    copied.value = true;
   } catch (reason) {
-    formError.value = reason instanceof Error ? reason.message : "配对码创建失败";
+    showError(reason);
   }
 }
-
-watch(deviceId, () => {
-  if (!selectedDevice.value?.projects.some((project) => project.id === projectId.value)) {
-    projectId.value = selectedDevice.value?.projects[0]?.id ?? "";
-  }
-});
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+  }).format(new Date(value));
+}
+watch(
+  [() => task.answer, () => task.events.length, () => history.value.length],
+  scrollToBottom,
+);
+watch(
+  () => task.state,
+  async (state) => {
+    if (
+      ["completed", "failed", "cancelled", "budget_exceeded"].includes(state) &&
+      conversationId.value
+    ) {
+      const identifier = conversationId.value;
+      try {
+        const detail = await resources.history(identifier);
+        if (identifier === conversationId.value) history.value = detail.tasks;
+      } catch (reason) {
+        showError(reason);
+      }
+    }
+  },
+);
 onMounted(async () => {
   try {
     await resources.load();
-    deviceId.value = resources.devices[0]?.id ?? "";
-    projectId.value = resources.devices[0]?.projects[0]?.id ?? "";
-    conversationId.value = resources.conversations[0]?.id ?? "";
+    projectId.value = resources.projects[0]?.id ?? "";
+    const saved = localStorage.getItem("agent-conversation");
+    const selected =
+      resources.conversations.find((item) => item.id === saved)?.id ??
+      resources.conversations[0]?.id;
+    if (selected) await selectConversation(selected);
   } catch (reason) {
-    formError.value = reason instanceof Error ? reason.message : "资源加载失败";
+    showError(reason);
   }
 });
-
 onBeforeUnmount(() => task.disconnect());
 </script>
 
 <template>
-  <NLayout class="app-layout">
-    <NLayoutHeader bordered class="topbar">
-      <div><strong>Company Agent</strong><span class="muted">Codex + DeepSeek</span></div>
-      <div class="topbar-user">
-        <span>{{ session.user?.email }}</span>
-        <NButton text @click="logout">退出</NButton>
+  <div
+    :class="[
+      'workbench',
+      { 'sidebar-open': sidebarOpen, 'inspector-open': inspectorOpen },
+    ]"
+    @keydown.esc="
+      sidebarOpen = false;
+      inspectorOpen = false;
+    "
+  >
+    <button
+      v-if="sidebarOpen"
+      class="sidebar-scrim"
+      aria-label="关闭会话导航"
+      @click="sidebarOpen = false"
+    ></button>
+    <aside class="sidebar" aria-label="工程与会话">
+      <a class="brand" href="/" @click.prevent="newConversation"
+        ><span class="brand-mark"><AppIcon name="chip" :size="23" /></span
+        ><span
+          ><strong>嵌入式编程助手</strong><small>本地工程工作台</small></span
+        ></a
+      >
+      <button
+        class="new-conversation"
+        :disabled="task.active || submitting"
+        @click="newConversation"
+      >
+        <AppIcon name="plus" :size="17" />新建会话<span>＋</span>
+      </button>
+      <div class="sidebar-section-label">当前工程</div>
+      <details class="project-switcher">
+        <summary>
+          <span class="project-symbol"
+            ><AppIcon name="folder" :size="18" /></span
+          ><span class="project-name"
+            >{{ project?.display_name || "连接本地工程…"
+            }}<small>{{
+              project?.product
+                ? `${project.product} ${project.version ?? ""}`
+                : "本机工作区"
+            }}</small></span
+          ><AppIcon name="chevron" :size="14" />
+        </summary>
+        <div class="project-detail">
+          <label v-if="resources.projects.length > 1"
+            >选择工程<select
+              v-model="projectId"
+              :disabled="task.active"
+              @change="newConversation"
+            >
+              <option
+                v-for="item in resources.projects"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ item.display_name }}
+              </option>
+            </select></label
+          ><span>工作目录</span><code>{{ project?.path }}</code
+          ><span>模型</span><code>{{ project?.model }}</code>
+        </div>
+      </details>
+      <div class="sidebar-section-label conversations-label">
+        会话记录 <span>{{ conversations.length }}</span>
       </div>
-    </NLayoutHeader>
-    <NLayoutContent class="workspace">
-      <section class="task-grid">
-        <NCard title="新任务" size="small">
-          <NForm @submit.prevent="start">
-            <NFormItem label="设备 ID">
-              <NSelect
-                v-model:value="deviceId"
-                :options="deviceOptions"
-                :loading="resources.loading"
-                placeholder="选择已配对设备"
-              />
-            </NFormItem>
-            <NFormItem label="项目">
-              <NSelect v-model:value="projectId" :options="projectOptions" placeholder="选择授权项目" />
-            </NFormItem>
-            <NFormItem label="会话">
-              <NSelect
-                v-model:value="conversationId"
-                :options="conversationOptions"
-                placeholder="选择会话"
-              />
-            </NFormItem>
-            <div class="inline-create">
-              <NInput v-model:value="conversationTitle" placeholder="新会话标题" />
-              <NButton @click="createConversation">新建会话</NButton>
-            </div>
-            <NFormItem label="需求">
-              <NInput
-                v-model:value="prompt"
-                type="textarea"
-                :autosize="{ minRows: 7, maxRows: 16 }"
-              />
-            </NFormItem>
-            <NAlert v-if="formError" type="error" class="form-alert">{{ formError }}</NAlert>
-            <NButton
-              type="primary"
-              attr-type="submit"
-              :loading="submitting"
-              :disabled="!canSubmit"
-            >
-              开始执行
-            </NButton>
-            <NButton
-              v-if="task.taskId && !['completed', 'failed', 'cancelled'].includes(task.state)"
-              class="cancel-button"
-              @click="task.cancel"
-            >
-              取消
-            </NButton>
-            <NButton
-              v-if="task.taskId && ['completed', 'failed', 'cancelled'].includes(task.state)"
-              class="cancel-button"
-              @click="task.rollback"
-            >
-              回滚本次修改
-            </NButton>
-            <NButton class="cancel-button" @click="createPairingCode">生成设备配对码</NButton>
-          </NForm>
-          <NAlert v-if="pairingCode" type="success" class="pairing-code">
-            配对码：<strong>{{ pairingCode }}</strong><br />有效期至 {{ pairingExpiresAt }}
-          </NAlert>
-        </NCard>
-        <NCard title="执行状态" size="small">
-          <div class="status-row">
-            <NTag :type="statusType">{{ task.state }}</NTag>
-            <code v-if="task.taskId">{{ task.taskId }}</code>
-          </div>
-          <NAlert v-if="task.error" type="warning" class="form-alert">{{ task.error }}</NAlert>
-          <NAlert v-if="task.rollbackStatus" type="info" class="form-alert">
-            回滚状态：{{ task.rollbackStatus }}
-          </NAlert>
-          <section
-            v-if="task.approvals.some((item) => item.status === 'pending')"
-            class="approval-panel"
+      <label class="conversation-search"
+        ><AppIcon name="search" :size="14" /><input
+          v-model="search"
+          type="search"
+          placeholder="查找会话"
+          aria-label="查找会话"
+      /></label>
+      <nav class="conversation-list" aria-label="会话记录">
+        <button
+          v-for="item in conversations"
+          :key="item.id"
+          :class="[
+            'conversation-link',
+            { selected: item.id === conversationId },
+          ]"
+          :disabled="task.active || submitting"
+          :aria-current="item.id === conversationId ? 'page' : undefined"
+          :title="item.title"
+          @click="selectConversation(item.id)"
+        >
+          <AppIcon name="chat" :size="16" /><span>{{ item.title }}</span
+          ><time :datetime="item.created_at">{{
+            shortDate(item.created_at)
+          }}</time>
+        </button>
+        <p v-if="!conversations.length" class="sidebar-empty">
+          {{ search ? "没有匹配的会话" : "开始对话后，会话会保存在这里。" }}
+        </p>
+      </nav>
+      <footer class="sidebar-footer">
+        <span class="connection-dot" :class="{ connected: !!project }"></span>
+        <div>
+          <strong>{{
+            project
+              ? "本地工程已连接"
+              : resources.loading
+                ? "正在连接…"
+                : "工程未连接"
+          }}</strong
+          ><small>{{ project?.model ?? "检查本地服务是否启动" }}</small>
+        </div>
+        <AppIcon name="chip" :size="17" />
+      </footer>
+    </aside>
+    <main class="chat-workspace">
+      <header class="workspace-header">
+        <button
+          class="icon-button mobile-navigation"
+          aria-label="打开会话导航"
+          @click="sidebarOpen = true"
+        >
+          <AppIcon name="menu" />
+        </button>
+        <div class="workspace-breadcrumb">
+          <AppIcon name="folder" :size="16" /><span>{{
+            project?.display_name || "本地工程"
+          }}</span
+          ><span class="breadcrumb-separator">/</span>
+          <h1>{{ conversation?.title || "新会话" }}</h1>
+        </div>
+        <button
+          :class="['review-toggle', { selected: inspectorOpen }]"
+          aria-label="工程审阅"
+          :aria-expanded="inspectorOpen"
+          aria-controls="delivery-panel"
+          @click="inspectorOpen = !inspectorOpen"
+        >
+          <AppIcon name="panel" :size="16" /><span>工程审阅</span
+          ><span
+            v-if="task.delivery?.changed_files.length"
+            class="change-count"
+            >{{ task.delivery.changed_files.length }}</span
           >
-            <strong>等待审批</strong>
-            <div
-              v-for="approval in task.approvals.filter((item) => item.status === 'pending')"
-              :key="approval.id"
-              class="approval-row"
+        </button>
+      </header>
+      <div ref="transcript" class="transcript" @scroll="trackScroll">
+        <div v-if="loadingHistory" class="loading-history">
+          <span class="activity-dot"></span>正在读取会话…
+        </div>
+        <div v-else-if="!hasConversation" class="welcome">
+          <span class="welcome-mark"><AppIcon name="chip" :size="31" /></span>
+          <div class="welcome-eyebrow">
+            {{ project?.product || "EMBEDDED WORKSPACE" }}
+          </div>
+          <h2>从一个模块，开始构建。</h2>
+          <p>
+            描述开发需求，让助手结合工程与规格书完成实现。<br />代码改动、原文依据和检查结果，都留在当前工作区。
+          </p>
+          <div class="quick-starts">
+            <button
+              v-for="item in quickStarts"
+              :key="item.title"
+              @click="useQuickStart(item.prompt)"
             >
-              <code>{{ approval.provider_item_id }}</code>
-              <NButton size="small" type="primary" @click="task.decide(approval.id, 'approved')">
-                批准
-              </NButton>
-              <NButton size="small" type="error" @click="task.decide(approval.id, 'rejected')">
-                拒绝
-              </NButton>
+              <AppIcon :name="item.icon" :size="20" /><strong>{{
+                item.title
+              }}</strong
+              ><span>{{ item.description }}</span
+              ><AppIcon name="arrow" :size="15" class="quick-arrow" />
+            </button>
+          </div>
+          <div v-if="project" class="welcome-context">
+            <AppIcon name="folder" :size="14" /><span>{{
+              project.display_name
+            }}</span
+            ><span v-if="project.product"
+              >{{ project.product }} · {{ project.version }}</span
+            >
+          </div>
+        </div>
+        <div v-else class="message-list">
+          <template v-for="item in earlier" :key="item.id">
+            <article class="message user-message">
+              <div class="user-bubble">{{ item.prompt }}</div>
+            </article>
+            <article class="message assistant-message">
+              <div class="assistant-identity">
+                <span class="assistant-mark"
+                  ><AppIcon name="chip" :size="16" /></span
+                ><strong>助手</strong
+                ><span>{{ statusLabels[item.status] }}</span>
+              </div>
+              <HistoryTrace :task-id="item.id" /><MarkdownContent
+                :content="
+                  item.response?.answer ||
+                  item.response?.error ||
+                  statusLabels[item.status]
+                "
+              />
+            </article>
+          </template>
+          <article v-if="currentPrompt" class="message user-message">
+            <div class="user-bubble">{{ currentPrompt }}</div>
+          </article>
+          <article
+            v-if="currentPrompt"
+            class="message assistant-message current-message"
+          >
+            <div class="assistant-identity">
+              <span class="assistant-mark"
+                ><AppIcon name="chip" :size="16" /></span
+              ><strong>助手</strong
+              ><span v-if="task.active" class="assistant-working"
+                >正在处理<span class="typing-dots">…</span></span
+              >
             </div>
-          </section>
-          <NEmpty v-if="!task.events.length" description="尚无任务事件" />
-          <NTimeline v-else>
-            <NTimelineItem
-              v-for="event in task.events"
-              :key="event.sequence"
-              :title="event.type"
-              :time="`#${event.sequence}`"
+            <ExecutionTrace :events="task.events" :active="task.active" />
+            <div v-if="task.answer" data-testid="answer">
+              <MarkdownContent :content="task.answer" />
+            </div>
+            <p v-else-if="task.active" class="waiting-answer">
+              <span class="activity-dot"></span>{{ activityLabel }}
+            </p>
+            <p v-else-if="!task.error" class="muted">本轮没有生成答复。</p>
+            <div v-if="!task.active && task.answer" class="answer-actions">
+              <button
+                class="icon-button"
+                :aria-label="copied ? '答复已复制' : '复制答复'"
+                :title="copied ? '已复制' : '复制 Markdown'"
+                @click="copyAnswer"
+              >
+                <AppIcon :name="copied ? 'check' : 'copy'" :size="15" /></button
+              ><span v-if="task.result?.steps">{{ task.result.steps }} 步</span
+              ><span v-if="task.result?.usage"
+                >{{
+                  task.result.usage.total_tokens.toLocaleString()
+                }}
+                tokens</span
+              ><button
+                v-if="task.delivery"
+                class="delivery-link"
+                @click="
+                  reviewTab = task.delivery.decisions?.length
+                    ? 'implementation'
+                    : task.delivery.changed_files.length
+                      ? 'changes'
+                      : 'checks';
+                  inspectorOpen = true;
+                "
+              >
+                <AppIcon name="file" :size="14" />{{
+                  task.delivery.changed_files.length
+                    ? `${task.delivery.changed_files.length} 个文件改动`
+                    : "查看执行记录"
+                }}<AppIcon name="arrow" :size="12" />
+              </button>
+            </div>
+            <button
+              v-if="task.result?.verification && !task.active"
+              :class="['verification-note', task.result.verification.status]"
+              @click="
+                reviewTab = 'checks';
+                inspectorOpen = true;
+              "
             >
-              <pre>{{ JSON.stringify(event.payload, null, 2) }}</pre>
-            </NTimelineItem>
-          </NTimeline>
-        </NCard>
-      </section>
-    </NLayoutContent>
-  </NLayout>
+              <AppIcon
+                :name="
+                  task.result.verification.status === 'passed'
+                    ? 'check'
+                    : 'clock'
+                "
+                :size="14"
+              />{{ verificationLabel(task.result.verification.status)
+              }}<AppIcon name="chevron" :size="12" />
+            </button>
+          </article>
+        </div>
+      </div>
+      <div class="composer-area">
+        <div v-if="formError || task.error" class="error-notice" role="alert">
+          <AppIcon name="warning" :size="16" /><span>{{
+            formError || task.error
+          }}</span>
+        </div>
+        <div v-if="task.active" class="activity-bar" role="status">
+          <span class="activity-dot"></span>{{ activityLabel
+          }}<span class="activity-steps">{{ tools.length }} 项操作</span>
+        </div>
+        <form class="composer" @submit.prevent="start">
+          <label class="sr-only" for="task-prompt">需求或后续修改</label
+          ><textarea
+            id="task-prompt"
+            ref="input"
+            v-model="prompt"
+            rows="2"
+            placeholder="描述需求，或继续提出修改…"
+            :disabled="submitting || loadingHistory"
+            @input="resizeInput"
+            @keydown="onKeydown"
+          ></textarea>
+          <div class="composer-toolbar">
+            <div class="composer-context">
+              <AppIcon name="folder" :size="14" /><span>{{
+                project?.display_name || "本地工作区"
+              }}</span
+              ><span class="composer-model">{{ project?.model }}</span>
+            </div>
+            <button
+              v-if="task.active"
+              class="stop-button"
+              type="button"
+              :disabled="task.state === 'cancelling'"
+              aria-label="取消任务"
+              @click="cancel"
+            >
+              <AppIcon name="stop" :size="12" />{{
+                task.state === "cancelling" ? "正在取消" : "停止"
+              }}</button
+            ><button
+              v-else
+              class="send-button"
+              type="submit"
+              :disabled="!canSend"
+              aria-label="开始执行"
+            >
+              <AppIcon name="send" :size="18" />
+            </button>
+          </div>
+        </form>
+        <div class="composer-caption">
+          <span :class="['task-status', task.state]" data-testid="task-status"
+            ><span class="status-dot"></span
+            >{{ statusLabels[task.state] }}</span
+          ><span
+            >Enter 发送 <span class="caption-divider">·</span> Shift + Enter
+            换行</span
+          >
+        </div>
+      </div>
+    </main>
+    <button
+      v-if="inspectorOpen"
+      class="inspector-scrim"
+      aria-label="关闭工程审阅"
+      @click="inspectorOpen = false"
+    ></button
+    ><DeliveryPanel
+      v-if="inspectorOpen"
+      id="delivery-panel"
+      v-model:tab="reviewTab"
+      :delivery="task.delivery"
+      :result="task.result"
+      @close="inspectorOpen = false"
+    />
+  </div>
 </template>

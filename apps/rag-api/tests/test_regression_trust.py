@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECK = ROOT / "output" / "regression_set_20261020" / "check.py"
+CHECK = ROOT / "evaluation" / "regression.py"
 
 
 def _load_checker(tmp_path: Path):

@@ -2,29 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useResourceStore } from "./resources";
 
-describe("resource store", () => {
-  beforeEach(() => {
-    setActivePinia(createPinia());
-    vi.unstubAllGlobals();
-  });
+describe("local resources", () => {
+  beforeEach(() => { setActivePinia(createPinia()); vi.unstubAllGlobals(); });
 
-  it("loads devices and conversations and creates a conversation", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "device-1", projects: [] }]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "conversation-1", title: "Existing" }]), { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: "conversation-2", title: "New", created_at: "now" }), { status: 201 }),
-      );
+  it("loads the local project and persisted conversations", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "local", path: "project" }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "old", title: "Existing" }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "new", title: "New" }), { status: 201 }));
     vi.stubGlobal("fetch", fetch);
     const resources = useResourceStore();
-
     await resources.load();
-    const created = await resources.createConversation("New");
-
-    expect(resources.devices[0]?.id).toBe("device-1");
-    expect(resources.conversations.map((item) => item.id)).toEqual(["conversation-2", "conversation-1"]);
-    expect(created.title).toBe("New");
-    expect(fetch).toHaveBeenCalledTimes(3);
+    await resources.createConversation("New", "local");
+    expect(resources.projects[0]?.id).toBe("local");
+    expect(resources.conversations.map((item) => item.id)).toEqual(["new", "old"]);
+    expect(fetch.mock.calls[0]![0]).toBe("/api/agent/projects");
+    expect(JSON.parse(fetch.mock.calls[2]![1].body)).toEqual({ title: "New", project_id: "local" });
   });
 });

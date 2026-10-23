@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .contracts import ToolFinished, ToolStarted
 from .demos.manifest_check import IGNORED_DIRS
+from .implementation import ImplementationReview
 from .trajectory import trajectory_recorder
 
 
@@ -52,6 +53,8 @@ class DeliveryRecorder:
         self.clock = time.monotonic()
         self.trajectory, self.record_event = trajectory_recorder()
         self.tools: list[dict] = []
+        self.implementation = (ImplementationReview(workspace, self.snapshot, self.tools)
+                               if workspace else None)
 
     def snapshot(self) -> dict[Path, bytes]:
         return project_files(self.workspace, exclude=self.excluded) if self.workspace else {}
@@ -63,7 +66,9 @@ class DeliveryRecorder:
                 "call_id": event.call.id, "name": event.call.name,
                 "arguments": asdict(event.call)["arguments"],
                 "input_revision": (
-                    revision(file_hashes(self.snapshot())) if event.call.name == "run_command"
+                    revision(file_hashes(self.snapshot())) if event.call.name in {
+                        "run_command", "verify_project",
+                    }
                     else None
                 ),
             })
@@ -72,7 +77,7 @@ class DeliveryRecorder:
                         if item["call_id"] == event.call.id), None)
             if row is not None:
                 row.update(content=event.result.content, is_error=event.result.is_error)
-                if row["name"] == "run_command":
+                if row["name"] in {"run_command", "verify_project"}:
                     row["output_revision"] = revision(file_hashes(self.snapshot()))
 
     def finish(self, result, *, question: str, settings: dict, response: dict,
@@ -100,6 +105,8 @@ class DeliveryRecorder:
             "settings": settings, "response": response, "exit_code": exit_code,
             "task_acceptance": response.get("verification", {}).get("status", "unverified"),
             "verification": response.get("verification"),
+            "decisions": self.implementation.finish(after, final_revision)
+                         if self.implementation else [],
             "session": str(session.resolve()) if session else None,
             "workspace": str(self.workspace) if self.workspace else None,
             "snapshot_excludes": [str(path) for path in self.excluded],
@@ -123,7 +130,7 @@ class DeliveryRecorder:
             f"Revision: `{final_revision}`\n\n"
             "Changed files:\n\n" + "\n".join(f"- `{name}`" for name in report["changed_files"])
             + "\n\nCommands:\n\n" + "\n".join(
-                f"- `{row['arguments']['command']}`; error={row.get('is_error')}; "
+                f"- `{row['arguments']}`; error={row.get('is_error')}; "
                 f"matches delivered revision={row['matches_delivery']}" for row in commands
             ) + "\n\nVerification:\n\n```json\n"
             + json.dumps(report["verification"], ensure_ascii=False, indent=2)

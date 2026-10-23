@@ -7,10 +7,13 @@
     "dev": "vite --port 5174",
     "build": "vue-tsc -b && vite build",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test",
     "preview": "vite preview --port 4174"
   },
   "dependencies": {
+    "diff": "^9.0.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3",
     "naive-ui": "^2.40.3",
     "pinia": "^2.3.1",
     "vue": "^3.5.13",
@@ -18,6 +21,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",

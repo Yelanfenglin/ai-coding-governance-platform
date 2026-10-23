@@ -14,6 +14,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..contracts import (
     BlockEnd,
@@ -143,7 +144,9 @@ def httpx_stream_transport(timeout: float = 60.0) -> StreamTransport:
         ) from exc
 
     async def transport(request: TransportRequest) -> AsyncIterator[str]:
-        async with httpx.AsyncClient(timeout=timeout) as client, client.stream(
+        # Loopback services must not be sent through Windows/system HTTP proxies.
+        trust_env = urlsplit(request.url).hostname not in {"127.0.0.1", "localhost", "::1"}
+        async with httpx.AsyncClient(timeout=timeout, trust_env=trust_env) as client, client.stream(
             "POST", request.url, headers=request.headers, content=request.body
         ) as response:
             if response.status_code >= 400:

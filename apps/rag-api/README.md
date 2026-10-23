@@ -1,114 +1,70 @@
-# rag-api
+# 规格书 RAG 服务
 
-产品规格书 RAG 的独立服务：PDF 解析与结构重建、PostgreSQL 文档与 chunk 管理、Milvus 向量检索、BM25/RRF、上下文扩展与带引用问答。Agent 通过 HTTP 调用检索和原文上下文接口。
+面向 MCU 规格书的结构化解析、混合检索与证据问答服务。Agent 通过 HTTP 获取带型号、版本、页码与片段标识的证据，再按需展开原文。
 
-## 当前目录
+## 检索链路
 
 ```text
-app/parser/                 PDF 原生层 + DocLayout anchor + 结构后处理
-app/chunking/               语义单元重建 + structure-aware chunk 生成（loader/units/chunker/metadata）
-scripts/pp_doclayout_all.py PP-DocLayoutV3 批处理与断点续跑
-scripts/audit_reconstruction.py 解析产物不变量审计
-scripts/audit_chunks.py     chunk 统计与不变量验收（Step 4）
-tests/test_parser.py        单元测试与可选的本地 PDF 回归
-tests/test_chunking.py      chunk 层单元测试
-docs/chunk-strategy.md      chunk 分块规划（v1 基线）
-docs/parser-pipeline.md     完整解析流程与处理技巧
-docs/rag-experience.md      RAG 链路经验库：文档解析问题、根因与解决方案
-docs/parser-visual-audit.md 表格/快照人工视觉审计基线
-artifacts/                  本地版面模型产物，不提交
-storage/parsed/             本地解析结果，不提交
-storage/chunks/             chunk 层产物（chunks.jsonl），不提交
+PDF → 版面与原生结构重建 → 语义分块 → PostgreSQL / Milvus
+问题 + 型号/版本 → 向量召回 + BM25 → RRF → 重排 → 上下文与引用
 ```
 
-旧版 `parser_v0` 和 `parser_v1_minimal` 已收敛为唯一入口 `app.parser`。解析代码不依赖 PostgreSQL、Milvus 或外部 LLM。
+- 解析保留章节、寄存器表、合并单元格、跨页表格及图片定位，避免图表文字重复进入正文。
+- 分块以语义单元与结构边界组织，元数据关联产品、版本、章节、页码与源文件。
+- 向量检索可结合 BM25、RRF 和 reranker；证据选择与生成分层，引用检查单独执行。
+- 入库、检索、问答和 trace 参数由 `app/settings.py` 控制，BM25、重排等按部署配置启用。
 
-服务入口为 `app/main.py`，数据迁移位于 `alembic/`，入库入口为 `app.ingest.cli`，检索编排位于 `app/retrieval/`。planner、filters、trace 等行为以 `app/settings.py` 的默认配置为准；存在实现不代表默认启用。
+## 安装与启动
 
-## 服务启动与评测
-
-在本目录创建项目虚拟环境并安装 `.[dev]`，将 `.env.example` 复制为 `.env`，配置独立的 PostgreSQL `rag_kb` 数据库及对应账号。数据库、PDF、解析缓存和密钥不随代码分发。
+在本目录使用 Python 3.12 环境：
 
 ```powershell
 $env:PYTHONNOUSERSITE='1'
+py -3.12 -m venv .venv
+.venv/Scripts/python.exe -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+```
+
+在 `.env` 配置 PostgreSQL、Milvus、embedding 与生成 provider。准备数据库并启动服务：
+
+```powershell
 .venv/Scripts/python.exe -m alembic upgrade head
 docker compose -f infra/milvus/compose.yaml up -d
 .venv/Scripts/python.exe -B scripts/serve.py
 ```
 
-Milvus 的版本、数据卷和启动顺序见 [本地部署说明](infra/milvus/README.md)。服务默认前缀为 `/api/rag`；配置 `RAG_API_KEY` 后请求带 `X-API-Key`。常用接口为：
+向量模型与维度应与所选 collection 一致。PDF、解析产物和向量数据由部署者准备；数据接入使用 `python -m app.ingest --help`，解析使用 `python -m app.parser.parse --help`。
 
-- `GET /api/rag/health`：数据库、向量库和 provider 健康检查。
-- `GET /api/rag/search`：按问题、型号与版本检索。
-- `GET /api/rag/documents/{doc_id}/context/{chunk_id}`：展开证据上下文。
-- `POST /api/rag/query`：检索、生成与引用检查。
+Milvus 配置与数据卷说明见 [部署说明](infra/milvus/README.md)。
 
-Agent 的 `RAG_API_URL` 应包含 `/api/rag`。工程任务联调范围见 [Agent 验收摘要](../agent-runtime/docs/acceptance-20261023.md)。
+## API
 
-默认测试不调用付费模型；真实数据库和向量库测试以 integration 标记单独执行：
+默认前缀 `/api/rag`；配置 `RAG_API_KEY` 后请求带 `X-API-Key`。
+
+| 接口 | 用途 |
+|---|---|
+| `GET /health` | 数据库、向量库与 provider 就绪检查 |
+| `GET /search` | 按问题、产品、版本与类型检索 |
+| `GET /documents/{doc_id}/context/{chunk_id}` | 展开原始证据与邻近上下文 |
+| `POST /query` | 检索、生成、引用与回答检查 |
+
+Agent 的 `RAG_API_URL` 应填写完整前缀，例如 `http://127.0.0.1:8000/api/rag`。
+
+## 评测
+
+冻结题库位于 `evaluation/spec_retrieval_v2_2/`，当前数据版 2.3.1，覆盖 16 份规格书，分 development 与 holdout；必要证据组按事实子句、完整代码与来源范围判分。
 
 ```powershell
 .venv/Scripts/python.exe -m pytest -q -m "not integration"
-.venv/Scripts/python.exe -B evaluation/runner.py validate
-.venv/Scripts/python.exe -B evaluation/runner.py score --run-dir <冻结产物目录> --split development
+.venv/Scripts/python.exe -B evaluation/runner.py validate --pdf-root <原始PDF目录>
+.venv/Scripts/python.exe -B evaluation/runner.py score --run-dir <已有检索产物> --split development
+.venv/Scripts/python.exe -B evaluation/runner.py regression
 ```
 
-题库和评分脚本在 `evaluation/`；`validate` 需恢复冻结的 chunk 文件，原文校验还需 `--pdf-root`。历史模型请求、检索 run 和评测输出保存在本地 `output/`，未入库；`regression` / `status` 需要对应历史输入，缺失时返回非零，不能把空输入当作通过。`output/regression_set_20261020/check.py` 是现有 runner 直接加载的源码例外，单独保留。
+评分和回归只读取已有产物，不重新调用模型。原文校验需要对应 PDF 与 chunk 文件，回归需要已保存运行；缺失输入返回非零。
 
-## 解析流程
+2026-10-19 冻结批次：指定型号与版本的 holdout Top-5 全必要证据命中 19/20；无范围检索为 11/17。20 道正证据问答中，模型判题的完整引用支撑为 19/20，另 6 道边界题单独判断。检索命中与答案支撑分别计量，不合并成任务正确率。
 
-1. `pp_doclayout_all.py` 生成页面 anchor，负责大致区域和阅读顺序。
-2. `app.parser` 从 PDF 原生 text/span/vector 层恢复正文、表格和图片快照。
-3. 失败的 table anchor 只在原生分隔线形成完整二维记录时升级；缺失的向量图按图元连通性和局部文字密度保守补提。
-4. 图片裁剪框由原生图元、同图标签和相邻视觉区域共同校正；已识别正文/图题仍保留为 Markdown 文本。
-5. 对外层 cell 内跨列重复对齐的原生物理行，保守恢复无边框嵌套子表；原始 outer topology 与逐行来源同时保留。
-6. 跨页表格拼接：上一页以表格结束、下一页第一个正文块就是表格、表头（去空白归一化）一致且列数与水平 span 一致时，把同一张逻辑表的分页片段物理合并为一张表，删除下一页重复表头，输出 `<!-- pdf-pages: N-M -->` 并保留 `source_pages`。不做 rowspan/单元格被页切断的拼接，不合并表格截图。
-7. 目录区域重建：含 `目录` 标题或 ≥5 条“点线+末尾页码”视觉行的页面进入 TOC 模式，停止段落重排，按 PDF 视觉基线一行一项重建；末尾页码视为一条目录项的硬闭合。
-8. 结构后处理恢复编号标题层级并合并块内视觉换行。
-9. `audit_reconstruction.py` 检查文本唯一 ownership、表格边界、语义行来源、图片引用和页序。
+## 源码
 
-表格先使用旧版高置信边线冻结基线结果；只有基线失败且增强后的原生 separator 拓扑仍能通过重复行列校验时，才从 snapshot 升级为结构化表。拓扑优先使用 PDF 原生边线：细填充矩形可恢复为 rule，同一边界上的分段 rule 先做区间并集。文字只作为保守兜底，必须同时满足高密度记录锚点和邻行/邻列 separator 一致性；两行歧义、多行表头和纵排分组标签保持原跨度。若 PDF 将多个视觉单元格编码为一个 text span，解析器仅在字符坐标落入多个独立 cell origin 时按格分配；真实 rowspan/colspan 覆盖的原子格共享同一 origin，因此保持原样。
-
-表内无边框子记录不交给 chunker 二次猜测。解析器保留 outer `rows/cells` 作为保真视图，仅当多个相邻正文行在所有列中具有相同物理行数、跨列基线对齐、行宽留白充分且该模式重复出现时，才额外生成规范化 `semantic_rows`。单个多行 cell、表头换行和普通段落折行保持原样；规则不读取标题词义、引脚名或任何芯片字段。
-
-视觉区域不再直接照搬轻量模型 bbox。孤立图可向原生图元和同带标签扩展；并排或上下相邻的图以 anchor 中线隔离；已有正文/图题 anchor 构成边界，避免正文被截图吞掉。模型完全漏掉的向量图还需同时满足多图元连通、二维尺寸、局部文字密度和已有排他区域不重叠，生产规则不读取文档名、页码、标题词义或芯片字段。
-
-## 文档
-
-- [Chunk 分块规划（v1 基线）](docs/chunk-strategy.md) —— 语义单元模型、按内容类型的切块规则、语义 overlap、metadata 三级字段与验收统计。
-- [解析管线：完整流程与处理技巧](docs/parser-pipeline.md) —— 各阶段的职责、关键技术与“几何优先、词表禁用”的泛化约束。
-- [RAG 链路经验（当前：文档解析）](docs/rag-experience.md) —— 双栏顺序、rowspan 误吞整列、表格/图分类误判、字符级跨格分配、跨页拼接、目录重建等 20 余个问题的复盘与一句话对策速查；后续 chunking、检索等阶段经验将陆续补入。
-- [PDF 表格视觉审计基线](docs/parser-visual-audit.md) —— 人工逐页核对的表格/快照真值计数与逐格 A/B 结果。
-
-## 运行
-
-```powershell
-cd apps/rag-api
-
-python scripts/pp_doclayout_all.py `
-  --pdf "C:\path\PRODUCT.pdf" `
-  --output "artifacts\paddle_doclayout_v3\PRODUCT_doclayout_v3_regions.json" `
-  --summary "artifacts\paddle_doclayout_v3\PRODUCT_doclayout_v3_summary.md" `
-  --resume
-
-python -m app.parser.parse `
-  --pdf "C:\path\PRODUCT.pdf" `
-  --layout "artifacts\paddle_doclayout_v3\PRODUCT_doclayout_v3_regions.json" `
-  --out "storage\parsed\PRODUCT" `
-  --dpi 160
-
-python scripts/audit_reconstruction.py storage\parsed\PRODUCT
-python -m pytest -q
-```
-
-版面模型依赖是可选项；只重跑已有 layout JSON 时不需要加载 PaddleOCR。依赖分组见 `pyproject.toml`。
-
-## 本地三文档回归
-
-| 文档 | 页数 | page-local 结构化表 | 跨页拼接 | 合并后表块 | 规范化 subrows | 剩余 table snapshot | 结构审计 |
-|---|---:|---:|---:|---:|---:|---:|---|
-| M8P6272 V1.10 | 79 | 87 | 3 | 84 | 48 | 11 | 通过 |
-| M8P5170 V1.06 | 51 | 40 | 2 | 38 | 24 | 7 | 通过 |
-| M9F6820 V1.07 | 137 | 147 | 4 | 142 | 78 | 18 | 通过 |
-
-三份结果均为 0 orphan text line、0 duplicate ownership、0 missing snapshot。修复前的 86 个 table snapshot 候选已经逐张人工视觉复核：其中 50 张真表全部升级，剩余 36 张均为图、波形、封装或代码等误标。最终 274 张 page-local 结构化表中，原有 224 张的完整 cell 拓扑与基线逐张一致；跨页拼接后合计 264 个表块（142/38/84），逐格 A/B 除单元格文字的无损重分配外保持不变。新增语义视图恢复 38 个 outer row 内的 150 条对齐子记录，outer topology 仍逐格不变。详见 [PDF 表格视觉审计基线](docs/parser-visual-audit.md)。后续阶段边界见 [RAG 知识库系统设计](../../docs/rag-knowledge-base-design.md)。PDF、layout 产物、解析结果和真实 `.env` 都是本地数据，不应提交。
+`app/parser` 与 `app/chunking` 负责离线处理；`app/ingest` 负责入库；`app/retrieval`、`selection`、`generation`、`checks` 分别负责检索、证据选择、生成和检查。数据库迁移位于 `alembic/`，解析与数据审计脚本位于 `scripts/`。

@@ -453,11 +453,10 @@ class DashScopeLLMProvider:
 
 
 class DeepSeekLLMProvider(DashScopeLLMProvider):
-    """Direct DeepSeek OpenAI-compatible chat-completions provider (development).
+    """DeepSeek OpenAI-compatible chat-completions provider.
 
-    Production should use the company Responses proxy in ``apps/api-next``; this
-    provider exists so local development does not depend on DashScope/qwen.
-    Embeddings remain on DashScope because the frozen index uses that model.
+    Generation and embedding providers are configured independently. Embeddings
+    retain the model and dimensions used to build the selected vector index.
     """
 
     def __init__(

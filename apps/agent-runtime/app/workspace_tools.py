@@ -1,6 +1,5 @@
 """本地编程工具；模型决定步骤，工具执行文件操作与命令。
 
-工具分工参考 Pi 的 read/edit/write/bash，具体 Python 适配见验收报告。
 文件路径相对所选工程；命令是本机进程，不提供操作系统沙箱。
 """
 
@@ -152,7 +151,11 @@ def workspace_tools(directory: str | Path, *, manifest: bool | None = None) -> l
         return result({"edited": args["path"], "diff": diff})
 
     async def run_command(args, context):
-        return await execute_command(root, args)
+        outcome = await execute_command(root, args)
+        payload = json.loads(outcome.content)
+        payload["check_call_id"] = context.tool_call_id
+        outcome.content = json.dumps(payload, ensure_ascii=False)
+        return outcome
 
     tools = [
         FunctionTool("list_files", "列出本地工程文件和运行环境；glob可用**/*.c等模式。",

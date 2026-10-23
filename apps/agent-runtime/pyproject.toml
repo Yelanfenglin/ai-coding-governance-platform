@@ -12,9 +12,11 @@ dependencies = []
 [project.scripts]
 agent-runtime = "app.cli:main"
 agent-evaluate = "evaluation.runner:main"
+agent-web = "app.web:main"
 
 [project.optional-dependencies]
 http = ["httpx>=0.28,<1"]
+web = ["httpx>=0.28,<1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-dotenv>=1,<2"]
 dev = ["pytest>=8.4,<9", "pytest-asyncio>=0.25,<2", "ruff>=0.16,<1"]
 
 [tool.setuptools.packages.find]
@@ -23,7 +25,7 @@ include = ["app*", "evaluation*"]
 
 [tool.setuptools.package-data]
 "app.demos" = ["SKILL.md"]
-"evaluation" = ["cases/*.json", "fixtures/**/*", "protocols/*.md"]
+"evaluation" = ["cases/*.json", "fixtures/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

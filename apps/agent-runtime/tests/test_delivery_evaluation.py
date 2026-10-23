@@ -4,6 +4,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from app import cli
 from app.contracts import AssistantTurn, Message, ToolCall
 from app.delivery import DeliveryRecorder
@@ -67,6 +69,43 @@ async def test_cli_delivery_records_actual_changes_without_credentials(
     judgment = score(case, path, root, tmp_path / "checks", human_interventions=0)
     assert judgment["passed"] and judgment["autonomous_pass"]
     assert all(row["passed"] for row in judgment["checks"])
+
+
+@pytest.mark.parametrize("invalid_arguments", [
+    '{"command": ["python", "-c", "raise RuntimeError()"]]',
+    {"timeout": 1},
+])
+async def test_rejected_command_arguments_do_not_break_cli_delivery(
+    tmp_path, monkeypatch, capsys, invalid_arguments,
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    command = ["python", "-c", "print('continued after rejected arguments')"]
+    provider = MockProvider([
+        AssistantTurn(Message("assistant", tool_calls=[
+            ToolCall("invalid", "run_command", invalid_arguments),
+        ]), "tool_calls"),
+        AssistantTurn(Message("assistant", tool_calls=[
+            ToolCall("valid", "run_command", {"command": command}),
+        ]), "tool_calls"),
+        AssistantTurn(Message("assistant", "done"), "stop"),
+    ])
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", lambda **_: provider)
+    args = cli.build_parser().parse_args([
+        "go", "--base-url", "http://unused.invalid", "--workspace", str(root),
+        "--delivery-dir", str(tmp_path / "delivery"), "--json",
+        "--no-memory", "--no-compaction",
+    ])
+    assert await cli.run_once(args) == 0
+    response = json.loads(capsys.readouterr().out)
+    assert response["status"] == "completed" and response["answer"] == "done"
+    path = Path(response["delivery"])
+    report = json.loads(path.read_text(encoding="utf-8"))
+    rejected, accepted = report["commands"]
+    assert rejected["arguments"] == invalid_arguments and rejected["is_error"]
+    assert accepted["arguments"]["command"] == command and not accepted["is_error"]
+    assert "continued after rejected arguments" in accepted["content"]
+    assert str(invalid_arguments) in (path.parent / "report.md").read_text(encoding="utf-8")
 
 
 async def test_later_source_changes_cannot_reuse_a_passed_delivery(tmp_path, monkeypatch, capsys):

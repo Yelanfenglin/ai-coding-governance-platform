@@ -26,8 +26,6 @@ venv/
 htmlcov/
 .coverage
 
-# 本地评测产物；保留 runner 与测试直接加载的回归检查器源码。
-/output/*
-!/output/regression_set_20261020/
-/output/regression_set_20261020/*
-!/output/regression_set_20261020/check.py
+# 本地评测产物与方案草稿
+/output/
+/docs/plan/

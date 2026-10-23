@@ -1,93 +1,210 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
-test("loads resources, runs a task, and offers rollback", async ({ page }) => {
-  await page.route("**/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: "11111111-1111-4111-8111-111111111111",
-        team_id: "22222222-2222-4222-8222-222222222222",
-        email: "member@example.com",
-      },
-    }),
-  );
-  await page.route("**/devices", (route) =>
-    route.fulfill({
-      json: [
-        {
-          id: "33333333-3333-4333-8333-333333333333",
-          name: "Windows Lab",
-          runtime_version: "company-agent/0.1.0",
-          last_seen_at: new Date().toISOString(),
-          online: true,
-          projects: [
-            {
-              id: "44444444-4444-4444-8444-444444444444",
-              device_id: "33333333-3333-4333-8333-333333333333",
-              root_id: "root-1",
-              display_name: "Firmware",
-            },
-          ],
-        },
-      ],
-    }),
-  );
-  await page.route("**/conversations", async (route) => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({
-        status: 201,
-        json: { id: "66666666-6666-4666-8666-666666666666", title: "New", created_at: "now" },
-      });
-      return;
-    }
-    await route.fulfill({
-      json: [
-        {
-          id: "55555555-5555-4555-8555-555555555555",
-          title: "Existing task",
-          created_at: "now",
-        },
-      ],
-    });
-  });
-  await page.route("**/pairing-codes", (route) =>
-    route.fulfill({ json: { code: "pair-code", expires_at: "2026-08-04T16:00:00Z" } }),
-  );
-  await page.route("**/tasks", (route) =>
-    route.fulfill({
-      status: 201,
-      json: { id: "77777777-7777-4777-8777-777777777777", root_id: "root-1", status: "pending" },
-    }),
-  );
-  await page.route("**/tasks/77777777-7777-4777-8777-777777777777/events", (route) =>
-    route.fulfill({
-      contentType: "text/event-stream",
-      body: 'id: 1\nevent: turn/completed\ndata: {"sequence":1,"payload":{"summary":"done"}}\n\n',
-    }),
-  );
-  await page.route("**/tasks/77777777-7777-4777-8777-777777777777/rollback", (route) =>
-    route.fulfill({
-      json: {
-        task_id: "77777777-7777-4777-8777-777777777777",
-        status: "requested",
-        delivery_id: "rollback-1",
-        created: true,
-      },
-    }),
-  );
-
+test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancellation and responsive UI", async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1440, height: 940 });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const projects = await (await request.get("/api/agent/projects")).json();
+  const workspace = projects[0].path;
   await page.goto("/");
-  await expect(page.getByText("Windows Lab（在线）")).toBeVisible();
-  await expect(page.getByText("Firmware")).toBeVisible();
-  await expect(page.getByText("Existing task")).toBeVisible();
+  await expect(page.getByText("嵌入式编程助手", { exact: true })).toBeVisible();
+  await expect(page.getByText("Codex", { exact: false })).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "从一个模块，开始构建。" }),
+  ).toBeVisible();
+  expect(
+    (await (await request.get("/api/agent/conversations")).json()).length,
+  ).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath("desktop-empty.png") });
+  await page.getByRole("button", { name: "查阅规格依据" }).click();
+  await expect(page.locator("textarea")).toHaveValue(/检索规格书/);
+  expect(
+    (await (await request.get("/api/agent/conversations")).json()).length,
+  ).toBe(0);
+  await page
+    .locator("textarea")
+    .fill("读取手册和 seed.c，创建模块并检查；用户确认 HOST_ONLY 环境。");
+  await page.locator("textarea").dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+    keyCode: 229,
+  });
+  expect(
+    (await (await request.get("/api/agent/conversations")).json()).length,
+  ).toBe(0);
+  await page.locator("textarea").press("Enter");
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成", {
+    timeout: 20000,
+  });
+  await expect(page.getByTestId("answer")).toContainText("已创建 generated.c");
+  await expect(page.getByTestId("answer").locator("h2")).toHaveText("已完成");
+  await expect(page.getByTestId("answer").locator("pre code")).toContainText(
+    "int value = 2;",
+  );
+  await expect(page.locator(".reasoning-block")).toHaveCount(5);
+  await expect(page.locator(".reasoning-block[open]")).toHaveCount(0);
+  await page.locator(".reasoning-block > summary").first().click();
+  await expect(page.getByTestId("reasoning").first()).toContainText(
+    "先检查当前工程和规格依据",
+  );
+  await page.locator(".tool-group > summary").first().click();
+  await expect(page.getByText("检索规格书", { exact: true })).toBeVisible();
 
-  await page.locator("textarea").fill("修复状态机");
+  await page
+    .getByRole("button", { name: "未配置独立验收", exact: true })
+    .click();
+  await expect(page.getByTestId("verification")).toContainText(
+    "未配置独立验收",
+  );
+  await page.getByRole("tab", { name: /实现/ }).click();
+  const decision = page.getByTestId("implementation-decision");
+  await expect(decision).toHaveCount(1);
+  await expect(decision).toContainText("模块示例的配置与接入");
+  await expect(decision).toContainText("generated.c:1–1");
+  await expect(decision).toContainText("位置已核对");
+  await expect(decision).toContainText("执行通过 · 版本一致");
+  await expect(decision).toContainText("未做厂商编译或板卡验证");
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-implementation.png"),
+  });
+  await page.getByRole("button", { name: "查看文件差异" }).click();
+  await expect(page.getByTestId("diff")).toContainText("+int value = 2;");
+  expect(await readFile(join(workspace, "generated.c"), "utf8")).toBe(
+    "int value = 2;\n",
+  );
+  await page.getByRole("tab", { name: /实现/ }).click();
+  await page.getByRole("button", { name: /M9F6820 V1.7 · p.113/ }).click();
+  await expect(page.getByRole("tab", { name: /依据/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator(".evidence-item")).toHaveAttribute("open", "");
+  await expect(page.locator(".evidence-text")).toContainText("测试手册");
+  await expect(page.locator(".evidence-location")).toContainText("文档");
+  await page.screenshot({ path: testInfo.outputPath("desktop-evidence.png") });
+  await page.getByRole("tab", { name: /改动/ }).click();
+  await page.screenshot({ path: testInfo.outputPath("desktop-delivery.png") });
+  await page.getByRole("button", { name: "收起审阅面板" }).click();
+  await page.reload();
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成");
+  await page.getByRole("button", { name: /1 个文件改动/ }).click();
+  await expect(decision).toContainText("模块示例的配置与接入");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".sidebar")).not.toBeInViewport();
+  await expect(decision).toBeVisible();
+  for (const target of [
+    decision,
+    page.getByRole("button", { name: "收起审阅面板" }),
+  ]) {
+    const bounds = await target.boundingBox();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("mobile-implementation.png"),
+  });
+  await page.getByRole("button", { name: "收起审阅面板" }).click();
+  await page.setViewportSize({ width: 1440, height: 940 });
+
+  await page
+    .locator("textarea")
+    .fill("继续把上一轮的 value 改成 3，保留原工程。");
   await page.getByRole("button", { name: "开始执行" }).click();
-  await expect(page.getByText("completed", { exact: true })).toBeVisible();
-  await expect(page.getByText("turn/completed")).toBeVisible();
+  await expect(page.getByTestId("answer")).toContainText("将 value 改为 3", {
+    timeout: 20000,
+  });
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成");
+  expect(await readFile(join(workspace, "generated.c"), "utf8")).toBe(
+    "int value = 3;\n",
+  );
+  await page.locator(".history-trace > summary").first().click();
+  await expect(page.locator(".history-trace .reasoning-block")).toHaveCount(5);
+  await page
+    .locator(".history-trace .reasoning-block > summary")
+    .first()
+    .click();
+  await expect(
+    page.locator('.history-trace [data-testid="reasoning"]').first(),
+  ).toContainText("先检查当前工程和规格依据");
 
-  await page.getByRole("button", { name: "回滚本次修改" }).click();
-  await expect(page.getByText("回滚状态：requested")).toBeVisible();
+  await page.locator("textarea").fill("等待取消");
+  await page.getByRole("button", { name: "开始执行" }).click();
+  await expect(page.getByTestId("answer")).toContainText("正在等待取消");
+  await expect(
+    page.locator(".current-message .reasoning-block[open]"),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('.current-message [data-testid="reasoning"]'),
+  ).toContainText("先检查当前工程和规格依据");
+  await page.getByRole("button", { name: "取消任务" }).click();
+  await expect(page.getByTestId("task-status")).toHaveText("已取消", {
+    timeout: 10000,
+  });
+  await page.reload();
+  await expect(page.getByTestId("task-status")).toHaveText("已取消");
+  await page.locator("textarea").fill("取消后继续");
+  await page.getByRole("button", { name: "开始执行" }).click();
+  await expect(page.getByTestId("answer")).toContainText("已在原会话续接");
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成");
 
-  await page.getByRole("button", { name: "生成设备配对码" }).click();
-  await expect(page.getByText(/配对码：pair-code/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator("textarea")).toBeVisible();
+  const composer = await page.locator(".composer").boundingBox();
+  expect(composer!.y + composer!.height).toBeLessThan(844);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  await page.getByRole("button", { name: "打开会话导航" }).click();
+  await expect(page.getByRole("button", { name: /新建会话/ })).toBeVisible();
+  await page.getByRole("button", { name: "关闭会话导航" }).click();
+  await page.getByRole("button", { name: "工程审阅", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "工程审阅" }),
+  ).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("mobile-review.png") });
+  await page.getByRole("button", { name: "收起审阅面板" }).click();
+  await page.screenshot({ path: testInfo.outputPath("mobile-chat.png") });
+
+  const log = (
+    await readFile(
+      join(workspace, ".agent-runtime", "fixture-requests.jsonl"),
+      "utf8",
+    )
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const model = log.filter((row) => row.method === "POST");
+  expect(model.every((row) => row.body.model === "deepseek-flash")).toBe(true);
+  expect(
+    model.every(
+      (row) =>
+        row.body.thinking.type === "enabled" &&
+        row.body.reasoning_effort === "high",
+    ),
+  ).toBe(true);
+  expect(
+    model
+      .at(-1)
+      .body.messages.some(
+        (item: { role: string; content: string }) =>
+          item.role === "assistant" &&
+          item.content?.includes("将 value 改为 3"),
+      ),
+  ).toBe(true);
+  expect(
+    log.some((row) => row.method === "GET" && row.path.startsWith("/search?")),
+  ).toBe(true);
+  expect(
+    log.some((row) => row.method === "GET" && row.path.includes("/context/")),
+  ).toBe(true);
+  expect(errors).toEqual([]);
 });

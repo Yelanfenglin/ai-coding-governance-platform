@@ -16,7 +16,7 @@ from collections.abc import Awaitable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from .contracts import ToolResult
 from .tools import FunctionTool
@@ -114,7 +114,8 @@ class RagClient:
         import json as _json
 
         query = urlencode({key: value for key, value in params.items()})
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+        trust_env = urlsplit(url).hostname not in {"127.0.0.1", "localhost", "::1"}
+        async with httpx.AsyncClient(timeout=self.config.timeout, trust_env=trust_env) as client:
             response = await client.get(f"{url}?{query}", headers=headers)
         try:
             payload = response.json()
