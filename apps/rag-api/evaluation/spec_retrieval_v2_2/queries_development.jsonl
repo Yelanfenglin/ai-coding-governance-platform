@@ -1,0 +1,95 @@
+{"id": "R001", "input": {"question": "M8P515：把 B5 配成输出之后仍拉不出有力的高电平，只设方向位够吗？手册还要求哪个上拉位，怎样说明高电平驱动能力？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R002", "input": {"question": "M8P516：想靠内部低速 RC 直接给 CPU 当系统时钟，可以吗？系统时钟实际来自哪一路，低速时钟可供哪些模块？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R003", "input": {"question": "M8P5170：PUA 的最高位也和其他位一样控制上拉吗？请说明它对应的引脚、上下拉方向和上电默认状态。", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R004", "input": {"question": "M8P613：采样结束后应该看哪个完成标志，结果的高低字节放在哪两个寄存器？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R005", "input": {"question": "M8P615：采样通道或参考电压刚切换就马上转换，手册提醒要等待多久？采样值偶发异常时给了什么取值建议？", "product": "M8P615", "version": "V2.9", "top_k": 30}}
+{"id": "R006", "input": {"question": "M8P625：保存掉电不丢的设置数据，片内 EEPROM 的写入供电范围和读写次数分别是多少？", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R007", "input": {"question": "M8P626：IOC0 设为模拟端口后，数字输入读取还有效吗？要恢复普通数字端口，模式位应取什么值？", "product": "M8P626", "version": "V2.8", "top_k": 30}}
+{"id": "R008", "input": {"question": "M8P6271：只讨论 A 口方向控制：OEA7 为输入还是输出时分别写几，复位后的方向位是什么值？", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R009", "input": {"question": "M8P6272：我要把 12 位采样值拼成整数。左对齐和右对齐时，ADH、ADL 各有哪些位有效，ADFM 如何选择？", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R010", "input": {"question": "M8P632：IOC5 和 IOC0 都接按键，能同时打开它们的内部上拉吗？请保留该小节的特殊限制。", "product": "M8P632", "version": "V2.9", "top_k": 30}}
+{"id": "R011", "input": {"question": "M8P634：用整字节写 D 口上下拉控制寄存器时，最高两位能顺手置 1 吗？手册对 PUD 和 PDD 各有什么约束？", "product": "M8P634", "version": "V2.11", "top_k": 30}}
+{"id": "R012", "input": {"question": "M9F6601：做资源估算前，帮我确认程序 Flash、数据存储器和硬件堆栈的容量，不要引用相近型号。", "product": "M9F6601", "version": "V1.5", "top_k": 30}}
+{"id": "R013", "input": {"question": "M9F680：低优先级中断里还可能被高优先级中断抢占，能只靠快速寄存器堆栈保存现场吗？为什么？", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R014", "input": {"question": "M9F6820：PWM1CR 的 LEDBSY 能一直当成发送忙标志吗？LED 关闭和开启时，它的 0/1 各表示什么？", "product": "M9F6820", "version": "V1.7", "top_k": 30}}
+{"id": "R015", "input": {"question": "M9P6362：这款的 I²C 支持主机吗？地址位数、标准和快速模式的速率分别是什么？", "product": "M9P6362", "version": "V1.16", "top_k": 30}}
+{"id": "R016", "input": {"question": "M9P6363：上电、看门狗或软件复位后，程序从哪个地址开始？手册列出的复位方式一共有哪几种？", "product": "M9P6363", "version": "V1.8", "top_k": 30}}
+{"id": "R017", "input": {"question": "M8P515：找出完整的中断服务程序范例，保留复位入口、中断入口以及压栈、出栈和返回的顺序。", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R018", "input": {"question": "M8P516：找出把表里 0x0102 读成高低两个字节的完整汇编例子，尤其要保留 HBUF 到 TABDH 的操作。", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R019", "input": {"question": "M8P5170：找调节内部 RC 频率的原始程序；要看解锁值和寄存器的先后顺序，不能只给一段功能介绍。", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R020", "input": {"question": "M8P613：要参考 IOB0 端口变化中断的完整初始化和 ISR 范例，请一起找出端口设置、开中断、清标志和返回的程序。", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R021", "input": {"question": "M8P615：找 TC0 产生 125us 波形的整段示例，包括 T0CR、计数初值和中断处理；不要把初始化与 ISR 拆开。", "product": "M8P615", "version": "V2.9", "top_k": 30}}
+{"id": "R022", "input": {"question": "M8P625：把读取 EEPROM 的完整原始代码给我，指针设置、读模式的开关和最后那行地址范围注释都要保留。", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R023", "input": {"question": "M8P626：找写 EEPROM 的原始范例，保留三步解锁到开始写入的顺序，以及写完后的模式清除和错误分支。", "product": "M8P626", "version": "V2.8", "top_k": 30}}
+{"id": "R024", "input": {"question": "M8P6271：内部 RC 校准寄存器能直接写吗？请给出手册的完整调整示例，保留 0x1F9 地址的两次写入。", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R025", "input": {"question": "M8P6272：找 IRC 频率调整的完整汇编示例，指出解锁使用的寄存器，并保留重复写入时的原注释。", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R026", "input": {"question": "M8P632：找 INT0 下降沿触发的整段示例，必须同时有 A6 的端口设置、OPTION 配置、使能与 ISR 清标志。", "product": "M8P632", "version": "V2.9", "top_k": 30}}
+{"id": "R027", "input": {"question": "M8P634：找从 sspint 入口开始的 I²C 从机中断处理原程序，要保留主机读、主机写、首字节和缓冲地址增减各分支。", "product": "M8P634", "version": "V2.11", "top_k": 30}}
+{"id": "R028", "input": {"question": "M9F6601：找允许写 FLOPEN=0xAA 的完整原始解锁代码，要保留 BANKBSR 和 CALLOCK 的操作次序。", "product": "M9F6601", "version": "V1.5", "top_k": 30}}
+{"id": "R029", "input": {"question": "M9F680：调 IRCCAH 前要走什么解锁流程？请找到包含 BANKBSR、CALLOCK 和最终写寄存器的完整原例。", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R030", "input": {"question": "M9F6820：找类 EE 区页写的完整程序范例，缓存装入、FLOPEN 解锁、EECON2 三步解锁和触发写入后的 NOP 都要保留，按原例展示。", "product": "M9F6820", "version": "V1.7", "top_k": 30}}
+{"id": "R031", "input": {"question": "M9P6362：找进入停止状态的 C 与汇编示例；设置停止位后，原例安排了几条空操作？两种写法都要保留。", "product": "M9P6362", "version": "V1.16", "top_k": 30}}
+{"id": "R032", "input": {"question": "M9P6363：找调整 CPU 分频并把 FCPU 写成 0x00 的完整代码，包含前面的寄存器组切换和解锁操作。", "product": "M9P6363", "version": "V1.8", "top_k": 30}}
+{"id": "R033", "input": {"question": "M8P515：IOH1 那张电压电流曲线为什么越向右电流越大？横轴是升序还是降序，两条曲线的供电标签是什么？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R034", "input": {"question": "M8P516：两路 PWM 时序图里，波形是否在同一周期起点上升？哪一路高电平更宽，图上的输出标签要原样保留。", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R035", "input": {"question": "M8P5170：间接寻址模式 0 和模式 1 的地址组成有什么区别？请把图中常量字段和指针字段的对应关系说清楚。", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R036", "input": {"question": "M8P613：IRCCAL 的曲线是否从头到尾单调上升？末端十六进制刻度是什么，纵轴的百分数能直接当成频率吗？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R037", "input": {"question": "M8P615：系统框图里 CPU、定时器低频时钟与看门狗时钟分别从哪条支路来？STOP 的门画在哪条路径上？", "product": "M8P615", "version": "V2.9", "top_k": 30}}
+{"id": "R038", "input": {"question": "M8P625：想看一字节 I²C 的起止和位顺序：请找出 SCL/SDA 时序，说明起始、停止以及第八位之后的标记。", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R039", "input": {"question": "M8P626：从机软件流程图中，主机读数据时遇到 NACK=1 和 NACK=0，缓冲地址的处理有何不同？", "product": "M8P626", "version": "V2.8", "top_k": 30}}
+{"id": "R040", "input": {"question": "M8P6271：看门狗的时钟是否来自 CLKM 选出的 CPU 时钟？请按时钟树指出它从哪处分支。", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R041", "input": {"question": "M8P6272：TC0 的 16 位结构图里，高低计数寄存器怎样接数据总线，溢出后怎样到中断？它画了比较器吗？", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R042", "input": {"question": "M8P632：我要查 SOP16 外形俯视和引脚间距那张图，请找出带 D、E1、E、e、b 的图，并说明尺寸数值和公差应该再核对哪里。", "product": "M8P632", "version": "V2.9", "top_k": 30}}
+{"id": "R043", "input": {"question": "M8P634：SSOP24 封装的第 13 脚标了哪个 PWM 复用名？同时确认这张图中电源和地的脚号，别用 SOP28 的编号。", "product": "M8P634", "version": "V2.11", "top_k": 30}}
+{"id": "R044", "input": {"question": "M9F6601：主机发送 I²C 地址后对方不应答，我要查手册的发送流程图；图里有没有继续送数据、重复起始和停止这些路径？", "product": "M9F6601", "version": "V1.5", "top_k": 30}}
+{"id": "R045", "input": {"question": "M9F680：带死区的两路 PWM 图中，DEADTR 和 DEADTF 标出的区间内，两条线分别在上方还是下方电平？图里能直接读出多少纳秒吗？", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R046", "input": {"question": "M9F6820：比较递增、递减、中心对齐三种 PWM 图：比较值是计数上限吗？输出翻转发生在比较点、回绕还是三角波峰谷？", "product": "M9F6820", "version": "V1.7", "top_k": 30}}
+{"id": "R047", "input": {"question": "M9P6362：SSOP24 封装要接电源和烧录口，请确认 GND、VDD、PSCK、PSDA 分别在哪个脚？", "product": "M9P6362", "version": "V1.16", "top_k": 30}}
+{"id": "R048", "input": {"question": "M9P6363：CPU 的高低频选择和 STOP 门控，会不会画在看门狗时钟路径上？请按框图解释这两条路径的位置。", "product": "M9P6363", "version": "V1.8", "top_k": 30}}
+{"id": "R049", "input": {"question": "M8P515：IOA4 切成弱驱动后，要查 3V 条件下的典型灌电流，应该选哪个驱动位、哪组电性参数？测试电平条件也一起给出，这个值能当最低设计保证吗？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R050", "input": {"question": "M8P5170：A4 已设数字输入，只开端口变化检测就能进入中断吗？请找齐端口检测、端口中断、总中断以及标志位四层依据。", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R051", "input": {"question": "M8P6272：A0 接普通数字按键，方向已经设为输入却还是读不到变化，还要检查哪组模拟端口设置？两组寄存器各怎么设、复位如何？", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R052", "input": {"question": "M8P625：打算在低电压下写 EEPROM，同时保留唤醒源。手册对写入电压和唤醒源各有什么限制，写入失败会怎样？", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R053", "input": {"question": "M9F6820：想把片内 Flash 的一个字节当 EEPROM 独立修改，能直接写吗？页大小、写缓冲来自哪里、缓冲地址和清缓冲位要怎样理解？", "product": "M9F6820", "version": "V1.7", "top_k": 30}}
+{"id": "R054", "input": {"question": "M9F6601：准备同时启用高低优先级中断。两级入口分别在哪，低优先级现场能否只依赖快速堆栈？使用触摸库时还要避开什么限制？", "product": "M9F6601", "version": "V1.5", "top_k": 30}}
+{"id": "R055", "input": {"question": "把 M8P6272 V1.10 的 PWM1CR 配置搬到 M9F6820 V1.07，bit7 能照搬吗？请并列给出两份手册中的实际含义。", "product": null, "version": null, "top_k": 30}}
+{"id": "R056", "input": {"question": "对照 M8P5170 V1.06 和 M8P6272 V1.10，上电默认下拉的脚分别是谁？控制位分别在哪个寄存器的最高位？", "product": null, "version": null, "top_k": 30}}
+{"id": "R057", "input": {"question": "M8P6272：请严格依据 V9.99 的手册回答 PUB.bit7 的复位值，找不到这个版本就说明缺失。", "product": "M8P6272", "version": "V9.99", "top_k": 30}}
+{"id": "R058", "input": {"question": "请仅根据 M8P0000 V1.00 的规格书确认其程序存储器容量；如果库里没有该型号请说明。", "product": "M8P0000", "version": "V1.0", "top_k": 30}}
+{"id": "R059", "input": {"question": "帮这颗芯片配 1kHz 呼吸灯，直接给寄存器初始化值。没有其他对话、型号或项目文件。", "product": null, "version": null, "top_k": 30}}
+{"id": "R060", "input": {"question": "M8P5170：只凭规格书告诉我公司电子沙漏板的 LED 和按键各接哪只脚、按下是高还是低；我没有提供原理图。", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R061", "input": {"question": "M8P515：请从 IOH1 的曲线给出 2.65V 处电流，精确到 0.01mA，并保证所有芯片都达到这个值。", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R062", "input": {"question": "M9F680：只看带死区 PWM 图，直接给出 DEADTR、DEADTF 各有多少纳秒，不需要时钟配置。", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R063", "input": {"question": "M9F6820：给出公司这台电脑能直接运行的编译器命令和烧录命令；只有规格书，没有工具安装和工程配置。", "product": "M9F6820", "version": "V1.7", "top_k": 30}}
+{"id": "R064", "input": {"question": "M8P6272：烧录后灯不亮，没有固件、原理图、供电测量或波形，能确定一定是芯片坏了吗？", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R065", "input": {"question": "M8P515 V2.03：产品简述与 1.1 特性对程序存储器位宽的描述一致吗？请并列引用两处写法，说明能否据此直接确定容量。", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R066", "input": {"question": "M8P515 V2.3 的数据存储器间接寻址模式 2 中，执行 MOVAR INDF2 时，A 中的值会传送到哪个 RAM 地址？该地址由哪两个寄存器拼接而成？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R067", "input": {"question": "M8P516 V1.10 的 IOA 口在弱上拉和中断方面有哪些特性？另外 IOA5 和 IOA0 分别有什么特殊说明？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R068", "input": {"question": "M8P516 V1.10 的中断向量地址是多少？当发生中断响应时，程序计数器PC的当前值会如何处理，程序接下来从哪里开始执行？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R069", "input": {"question": "M8P5170 V1.6 的 TC0 在 8 位模式下能输出哪些 PWM 信号，其中哪些 PWM 的极性可以单独设置？", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R071", "input": {"question": "M8P613 V2.10 的定时器/计数器 TC0 和 TC1 分别支持多少位定时/计数，TC0 是否带自动重载功能？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R072", "input": {"question": "M8P613 V2.10：外部中断触发恰好与进入 STOP 同时发生，为什么可能再也唤不醒？手册建议优先使用哪种中断；必须使用 INT0/INT1 时需要保留什么唤醒源？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R073", "input": {"question": "M8P615 V2.9 的 ADC 有多少路 12 位转换通道？其中外部输入、内部电源电压检测、内部 GND 电压检测和内部参考电压检测各占几路？", "product": "M8P615", "version": "V2.9", "top_k": 30}}
+{"id": "R075", "input": {"question": "M8P515 V2.3 的 STATUS 寄存器中，Z、DC、C 三个标志位分别位于哪一位，读写属性是什么，复位后的值是什么？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R076", "input": {"question": "在 M8P516 V1.10 中，当用户对 PCL 寄存器执行 ADDAR PCL 或 ADCAR PCL 指令时，参与加法运算的程序计数器是多少位？运算结果写到哪里？如果执行的是加法以外的其它运算，PCL 和 PCH 的行为有何不同？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R081", "input": {"question": "M8P613 V2.10 的 STATUS 寄存器中，Bit1（DC）在加法和减法运算时分别如何置位和清零？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R084", "input": {"question": "M8P515 V2.3 的 DIP8/SOP8 封装中，引脚 2 和引脚 7 分别对应哪些功能？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R103", "input": {"question": "M8P613 V2.10 中，当程序进入中断后，寄存器 OPTION 的 GIE 位会被硬件如何处理？系统退出中断后又会怎样？另外，若外部中断 INT0/INT1 的中断触发与进入休眠操作同时发生，会有什么后果，应如何解决？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R104", "input": {"question": "M8P615 V2.9 中，若必须使用外部中断 INT0、INT1，应如何配置唤醒源？WDT 唤醒后会发生什么？", "product": "M8P615", "version": "V2.9", "top_k": 30}}
+{"id": "R105", "input": {"question": "M8P6271 V1.10 中，系统时钟从低频切换到高频且 STBH=1 时，切换时间由哪几部分组成？", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R109", "input": {"question": "M8P5170 V1.6 的 OSCM 寄存器中，STOP、STPH、STPL 三个位分别位于哪一位，复位后的值各是多少？", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R110", "input": {"question": "M8P625（Version 2.8）的 EECON1 控制寄存器中，Bit7 EEMOD 的读/写属性是什么？复位后的值是多少？", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R111", "input": {"question": "M8P625 V2.8 的 OSCM 寄存器中，复位后 STPH、LPSPD、STPL 三位的值分别是什么？另外 CLKM 的初始状态由什么决定？", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R112", "input": {"question": "M8P626 V2.8 的 OSCM 寄存器中，Bit1 LPSPD 取 0 和取 1 分别对应内部低频振荡器的什么频率？另外，Bit3 CLKM 取 0 和取 1 分别表示 CPU 运行于哪种时钟？", "product": "M8P626", "version": "V2.8", "top_k": 30}}
+{"id": "R113", "input": {"question": "M8P6271 V1.10 的 OSCM 寄存器中，Bit4 STOP 与 Bit3 CLKM 的复位后取值分别是什么？它们各自表示什么状态？", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R118", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 M8P5170 的中断向量机制在中断使能和响应流程上分别如何定义？请并列比较两者的关键事实。", "product": null, "version": null, "top_k": 30}}
+{"id": "R119", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 M8P613 的中断向量地址分别是什么？请并列说明两者的中断相关配置。", "product": null, "version": null, "top_k": 30}}
+{"id": "R120", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 M8P625 的中断向量地址分别是什么？请分别说明 M8P515 的 GIE 位在复位后的值及其置 1 的含义，以及 M8P625 中断响应时程序计数器 PC 的处理和跳转地址。", "product": null, "version": null, "top_k": 30}}
+{"id": "R121", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 M8P6272 的中断向量机制在中断响应时分别如何动作？请比较两者：M8P515 的 GIE 位在响应中断后如何变化、复位后初值是多少；M8P6272 响应中断时 PC 当前值如何处理、跳转到哪个地址。", "product": null, "version": null, "top_k": 30}}
+{"id": "R122", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 M9F6601 的中断优先级机制在全局中断控制上有何不同？请分别说明 M8P515 的 GIE 位定义（含复位值及清零条件）以及 M9F6601 在响应低优先级和高优先级中断时 GIE/GIEL 的状态变化。", "product": null, "version": null, "top_k": 30}}
+{"id": "R123", "input": {"question": "M8P515 的 OPTION 寄存器中 GIE 位与 IOICR 寄存器中 IOBxICR 位分别控制什么？它们的复位后默认值各是多少？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R124", "input": {"question": "M8P613 的中断向量地址是多少？进入中断后程序如何跳转执行？另外，中断响应时 GIE 位会被如何处理，退出中断后又如何恢复？", "product": "M8P613", "version": "V2.10", "top_k": 30}}
+{"id": "R125", "input": {"question": "M8P6271 的中断向量地址是多少？当 OPTION 寄存器的 GIE 位为 1 且发生中断响应后，GIE 位会如何变化、程序会跳转到哪里执行？", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R126", "input": {"question": "在 M8P6272 中，中断响应后程序计数器 PC 的当前值会被保存到哪里、随后跳转到哪个地址执行？同时，OPTION 寄存器的 GIE 位在响应中断后会自动变成什么值，以及执行 RETIE 指令后该位会变成什么值？", "product": "M8P6272", "version": "V1.10", "top_k": 30}}
+{"id": "R127", "input": {"question": "M9F680 在 V1.18 中，中断向量地址如何分配？当使用触摸库时，低优先级中断对向量地址的使用受到什么限制？另外，多优先级模式下响应低优先级中断时 GIEL 和 GIEH 的状态如何变化？", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R128", "input": {"question": "M9P6362 的中断向量地址如何分配？当使用触摸库时，低优先级中断向量为何不能被其它中断使用？请结合中断向量章节与中断概述中关于优先级和 GIEL/GIEH 的说明解释。", "product": "M9P6362", "version": "V1.16", "top_k": 30}}

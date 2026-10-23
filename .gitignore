@@ -9,9 +9,12 @@ apps/agent/target/
 apps/agent/*.log
 runtime-check/
 apps/api-next/.venv/
+apps/agent-runtime/.venv/
 apps/web-next/test-results/
 apps/web-next/playwright-report/
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
 /docs/handoff.md

@@ -35,9 +35,15 @@ def _percentiles(values: list[int]) -> dict:
     }
 
 
-def audit(doc_dir: Path) -> dict:
+def audit(
+    doc_dir: Path,
+    code_sidecar: dict | None = None,
+    figure_descriptions: dict | None = None,
+) -> dict:
     doc = load_parsed_document(doc_dir)
-    units = build_semantic_units(doc)
+    units = build_semantic_units(
+        doc, code_sidecar=code_sidecar, figure_descriptions=figure_descriptions
+    )
     chunks = build_chunks(doc, units)
 
     all_titles = {" ".join(u.title.split()) for u in units if u.title}
@@ -50,7 +56,7 @@ def audit(doc_dir: Path) -> dict:
     for chunk in chunks:
         if chunk.metadata.semantic_type == "toc" and not chunk.exclude_from_embedding:
             errors.append(f"{chunk.chunk_id}: toc not excluded from embedding")
-        if chunk.metadata.block_types == ["table"]:  # reconstructed tables only
+        if chunk.metadata.semantic_type == "table":  # including attached conditions/notes
             if not chunk.metadata.table_id:
                 errors.append(f"{chunk.chunk_id}: table chunk without table_id (orphan)")
             if not chunk.metadata.row_group:
@@ -94,11 +100,39 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("outputs", nargs="+", type=Path)
     ap.add_argument("--out", type=Path, default=None, help="also write chunks.jsonl per doc")
+    ap.add_argument(
+        "--code-sidecar",
+        type=Path,
+        default=None,
+        help="run directory of the code-text sidecar (storage/code_text/<run_id>)",
+    )
+    ap.add_argument(
+        "--figure-descriptions",
+        type=Path,
+        default=None,
+        help="run directory of figure descriptions (storage/figure_descriptions/<run_id>)",
+    )
     args = ap.parse_args()
+
+    code_sidecar = None
+    if args.code_sidecar is not None:
+        from app.chunking.code_sidecar import load_code_sidecar
+
+        code_sidecar = load_code_sidecar(args.code_sidecar)
+
+    figure_descriptions = None
+    if args.figure_descriptions is not None:
+        from app.chunking.figure_descriptions import load_figure_descriptions
+
+        figure_descriptions = load_figure_descriptions(args.figure_descriptions)
 
     failed = False
     for doc_dir in args.outputs:
-        report = audit(doc_dir)
+        report = audit(
+            doc_dir,
+            code_sidecar=code_sidecar,
+            figure_descriptions=figure_descriptions,
+        )
         t = report["tokens"]
         print(f"{report['doc']} {report['version']}")
         print("-" * 40)

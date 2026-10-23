@@ -1,0 +1,20 @@
+{"id": "R089", "input": {"question": "M8P625 V2.08：想参考外部事件触发 PWM 单脉冲的原始程序，请给出 9.8 的跨页完整范例，保留 TC1、滤波/事件设置和中断结尾。原例的省略号和两次写 OEA 都原样保留。", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R090", "input": {"question": "M8P626 V2.08：找出 USART 异步发送 0x55、波特率注释为 38400 的完整汇编范例。要包含端口、发送控制、波特率高低位以及发送后的等待循环，不要只给步骤说明。", "product": "M8P626", "version": "V2.8", "top_k": 30}}
+{"id": "R091", "input": {"question": "M8P634 V2.11：我要参考用 TC0 溢出周期门控 TC2 的完整示例。请把初始化页和中断续页一起找出，保留清标志、检查使能和重新启动门控的原始次序。", "product": "M8P634", "version": "V2.11", "top_k": 30}}
+{"id": "R092", "input": {"question": "M8P634 V2.11：找 OPA0 先校准再进入放大工作模式的完整原例。要保留校准循环、三次计数判断、退出校准以及下一页端口和增益设置，不要把原例改写成伪代码。", "product": "M8P634", "version": "V2.11", "top_k": 30}}
+{"id": "R093", "input": {"question": "对照 M8P625 V2.08 和 M9P6363 V1.08，WDT 可选溢出时间分别有哪些？把前者的最长超时设置直接照搬到后者，能认为两者最长时间相同吗？", "product": null, "version": null, "top_k": 30}}
+{"id": "R094", "input": {"question": "把比较器配置从 M8P632 V2.09 移到 M9P6362 V1.16：反相输入 CMPNS 的 010、011 两个编码还能指向相同信号吗？请分别给出两款的对应关系。", "product": null, "version": null, "top_k": 30}}
+{"id": "R095", "input": {"question": "M8P625 V2.08 的 BRGDH 和 M9P6363 V1.08 的 BRGDxH，bit6/bit5 的定义能照搬吗？后者这两位分别控制什么，停止位选择的 0/1 又怎样对应？", "product": null, "version": null, "top_k": 30}}
+{"id": "R096", "input": {"question": "M9F680 V1.18：SPI 正在发送时再次写 SPIDATA，会覆盖正在发送的数据还是丢掉新数据？应检查哪个错误位、位于哪一位，以及手册规定用什么读取操作清除它？请同时找出行为说明和状态寄存器依据。", "product": "M9F680", "version": "V1.18", "top_k": 30}}
+{"id": "R097", "input": {"question": "M8P625 V2.08：USART 异步接收连续三个数据都没读取时，会保留第三个吗？RXOVF 怎样清除？另外 FRER=1 表示哪种帧错误，接收步骤要求怎样处理这份数据？", "product": "M8P625", "version": "V2.8", "top_k": 30}}
+{"id": "R098", "input": {"question": "M8P6271 V1.10：Fcpu=16MHz，且 VREF=VDD=5V，按 ADC 电气表的最高时钟选择分频，最小应分频多少、ADCKS 写什么？结合转换所需时钟数估算一次转换时间，并说明电气表是否给出设计保证。", "product": "M8P6271", "version": "V1.10", "top_k": 30}}
+{"id": "R099", "input": {"question": "M8P515 V2.3 中，绿色模式有哪两种工作状态，分别参考哪个电性参数表，且可由什么唤醒？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R100", "input": {"question": "M8P515 V2.3 的 TC0/TC1 在 8 位模式下，TCx 使能后计数到与周期寄存器数值相等时会发生什么？此时中断标志位如何变化？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R101", "input": {"question": "M8P5170 V1.6 中，绿色模式有哪几种？分别对应哪个电流特性参数表编号？", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R102", "input": {"question": "M8P5170 V1.6 的 TC0 在 8 位模式下，TC0 使能后计数与溢出是如何工作的？溢出时 TC0IF 会怎样？", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R107", "input": {"question": "M8P516 V1.10 的 OSCM 寄存器中，复位后 STOP、STPH、LIRC500K、STPL 这四位的值分别是什么？其中 LIRC500K 为 0 和 1 时分别对应内部低频振荡器的什么频率？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R108", "input": {"question": "M8P516 V1.10 的 IRCCAL 寄存器中，Bit7 和 Bit6 分别对应什么位名称，读/写属性是什么？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R114", "input": {"question": "M8P515 V2.3 的数据存储器寻址模式示意图中，间接寻址模式 0 下，地址字段由哪两部分组成？", "product": "M8P515", "version": "V2.3", "top_k": 30}}
+{"id": "R115", "input": {"question": "M8P516 V1.10 的 2.2.2 数据存储器寻址模式示意图中，间接寻址模式 0 下，矩形被竖线分成几格，各格内分别标了什么？", "product": "M8P516", "version": "V1.10", "top_k": 30}}
+{"id": "R116", "input": {"question": "M8P5170 V1.6 的系统时钟结构框图中，HIRC 输出分出的定时器高频时钟之外，另一支信号要经过什么处理才连到 CPU 时钟？LIRC 输出又经过什么分频连到看门狗时钟？", "product": "M8P5170", "version": "V1.6", "top_k": 30}}
+{"id": "R117", "input": {"question": "M8P625 V2.8 的数据存储器寻址模式中，直接寻址模式下地址字段的位宽来源是什么？", "product": "M8P625", "version": "V2.8", "top_k": 30}}

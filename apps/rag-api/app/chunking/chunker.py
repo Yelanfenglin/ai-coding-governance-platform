@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from .loader import ParsedDocument
 from .metadata import ChunkMetadata, build_chunk_id, estimate_tokens
-from .units import SemanticUnit
+from .units import Block, SemanticUnit
 
 TARGET = 512
 SOFT_MAX = 800
@@ -20,7 +20,53 @@ NORMAL_MAX = 1200
 SOFT_MIN = 150
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*")
 
-CHUNKER_VERSION = "0.1.0"
+_LANGUAGE_ALIASES = {
+    "asm": "asm",
+    "assembly": "asm",
+    "bash": "bash",
+    "c": "c",
+    "c#": "csharp",
+    "c++": "cpp",
+    "cpp": "cpp",
+    "csharp": "csharp",
+    "go": "go",
+    "golang": "go",
+    "html": "html",
+    "java": "java",
+    "javascript": "javascript",
+    "js": "javascript",
+    "json": "json",
+    "kotlin": "kotlin",
+    "lua": "lua",
+    "python": "python",
+    "py": "python",
+    "rust": "rust",
+    "sh": "bash",
+    "shell": "bash",
+    "sql": "sql",
+    "typescript": "typescript",
+    "ts": "typescript",
+    "xml": "xml",
+    "yaml": "yaml",
+    "yml": "yaml",
+}
+_LANGUAGE_HINTS = (
+    (re.compile(r"(?:c\+\+|cpp|C＋＋)", re.I), "cpp"),
+    (re.compile(r"(?:c#|csharp)", re.I), "csharp"),
+    (re.compile(r"(?:python|python\s*语言)", re.I), "python"),
+    (re.compile(r"(?:javascript|java\s*script|\bjs\b)", re.I), "javascript"),
+    (re.compile(r"(?:typescript|\bts\b)", re.I), "typescript"),
+    (re.compile(r"(?:rust|rust\s*语言)", re.I), "rust"),
+    (re.compile(r"(?:golang|go\s*语言)", re.I), "go"),
+    (re.compile(r"(?:汇编|assembly|\basm\b)", re.I), "asm"),
+    (re.compile(r"(?:shell|bash|脚本)", re.I), "bash"),
+    (re.compile(r"(?:json)", re.I), "json"),
+    (re.compile(r"(?:sql)", re.I), "sql"),
+    (re.compile(r"(?:java\s*语言|\bjava\b)", re.I), "java"),
+    (re.compile(r"(?:c\s*语言|语言\s*[:：]?\s*c\b)", re.I), "c"),
+)
+
+CHUNKER_VERSION = "0.3.2"
 
 
 @dataclass
@@ -35,6 +81,10 @@ class Chunk:
     tokens: int = 0
     chars: int = 0
     exclude_from_embedding: bool = False
+
+    @property
+    def kind(self) -> str:
+        return self.metadata.kind
 
     def to_dict(self) -> dict:
         d = self.metadata.to_dict()
@@ -62,6 +112,97 @@ def _breadcrumb(doc: ParsedDocument, unit: SemanticUnit) -> str:
 
 def _collapse(text: str) -> str:
     return " ".join(text.split())
+
+
+def _retrieval_text(title: str, body: str) -> str:
+    """Keep local context once; product/version and full paths live in metadata."""
+    title = _collapse(title)
+    return "\n".join(part for part in (title if title not in body else "", body) if part)
+
+
+def _label_in_text(label: str, text: str) -> bool:
+    # AD1 must not disappear merely because AD10 appears in the description.
+    return bool(re.search(r"(?<![A-Za-z0-9_])" + re.escape(label) + r"(?![A-Za-z0-9_])", text))
+
+
+def _language_from_hint(value: object) -> str:
+    text = str(value or "").strip()
+    direct = _LANGUAGE_ALIASES.get(text.lower())
+    if direct:
+        return direct
+    for pattern, language in _LANGUAGE_HINTS:
+        if pattern.search(text):
+            return language
+    return ""
+
+
+def _infer_code_language(raw: dict, code_text: str, unit: SemanticUnit) -> str:
+    for key in ("language", "language_hint", "code_language"):
+        language = _language_from_hint(raw.get(key))
+        if language:
+            return language
+
+    context = " ".join(
+        str(value or "")
+        for value in (
+            raw.get("hint"),
+            raw.get("caption"),
+            raw.get("title"),
+            raw.get("description"),
+            unit.title,
+        )
+    )
+    language = _language_from_hint(context)
+    if language:
+        return language
+
+    if re.search(r"^\s*#!.*(?:bash|sh)\b", code_text):
+        return "bash"
+    if re.search(r"\b(?:fn\s+main|let\s+mut|println!)\b", code_text):
+        return "rust"
+    if re.search(r"\bpackage\s+main\b|\bfunc\s+\w+\s*\(", code_text):
+        return "go"
+    if re.search(r"\b(?:def|from|import)\s+\w+|\bNone\b|\bself\.", code_text):
+        return "python"
+    if re.search(r"\bpublic\s+static\s+void\s+main\b|\bSystem\.out\.", code_text):
+        return "java"
+    if re.search(r"\busing\s+System\b|\bConsole\.WriteLine\b", code_text):
+        return "csharp"
+    if re.search(r"\b(?:interface|type)\s+\w+\s*[={]", code_text) and re.search(
+        r":\s*(?:string|number|boolean)\b", code_text
+    ):
+        return "typescript"
+    if re.search(r"\b(?:const|let|var)\s+\w+|=>|\bconsole\.log\b", code_text):
+        return "javascript"
+    if re.search(r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE)\b", code_text, re.I):
+        return "sql"
+    if re.search(r"^\s*[\[{]", code_text) and re.search(r'"[^"\n]+"\s*:', code_text):
+        return "json"
+    if re.search(r"#\s*include\b|\b(?:void|int|char|uint\d*_t)\s+\w+\s*\(", code_text):
+        cpp = re.search(r"\bstd::|#\s*include\s*<iostream>|\bclass\s+", code_text)
+        return "cpp" if cpp else "c"
+    return ""
+
+
+def _render_fenced_code(code_text: str, language: str) -> str:
+    longest = max((len(run) for run in re.findall(r"`+", code_text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    closing_gap = "" if code_text.endswith(("\n", "\r")) else "\n"
+    return f"{fence}{language}\n{code_text}{closing_gap}{fence}"
+
+
+def _apply_snapshot_metadata(meta: ChunkMetadata, raw: dict, image_ref: str) -> None:
+    meta.image_ref = image_ref
+    # Never clobber a description that a caller already assigned from the figure
+    # description sidecar (the raw block has no image_description of its own).
+    if not meta.image_description:
+        meta.image_description = raw.get("description") or raw.get("image_description")
+    meta.figure_type = str(raw.get("figure_type") or "")
+    meta.extraction_method = str(raw.get("extraction_method") or "")
+    confidence = raw.get("extraction_confidence")
+    meta.extraction_confidence = confidence if isinstance(confidence, (int, float)) else None
+    bbox = raw.get("bbox") or []
+    meta.bbox = list(bbox) if isinstance(bbox, (list, tuple)) else []
 
 
 def _row_values(row) -> list[str]:
@@ -123,7 +264,7 @@ def _plan_raw_groups(raw: dict) -> tuple[list[list[str]], int, list[list[int]]]:
 
 
 def _pack_groups(
-    groups: list[list[int]], rows: list[list[str]], schema: list[str]
+    groups: list[list[int]], rows: list[list[str]], schema: list[str], context_tokens: int = 0
 ) -> list[list[list[str]]]:
     """Pack consecutive row-groups into chunks sized to SOFT_MAX tokens.
 
@@ -132,13 +273,14 @@ def _pack_groups(
     """
     packed: list[list[list[str]]] = []
     current: list[list[str]] = []
-    tokens = 0
+    reserved = context_tokens + estimate_tokens(_render_markdown(schema, []))
+    tokens = reserved
     for group in groups:
         group_tokens = sum(estimate_tokens(" ".join(row)) for row in (rows[r] for r in group))
         if current and tokens + group_tokens > SOFT_MAX:
             packed.append(current)
             current = []
-            tokens = 0
+            tokens = reserved
         current.extend(rows[r] for r in group)
         tokens += group_tokens
     if current:
@@ -162,43 +304,41 @@ def _serialize_bits(raw: dict) -> str:
     return "\n".join(lines)
 
 
-def _schema_serialized(schema: list[str]) -> str:
-    return "表头: " + " | ".join(x for x in schema if x)
-
-
 def _build_from_raw_table(doc: ParsedDocument, unit: SemanticUnit, table_id: str) -> list[Chunk]:
     raw = unit.table_raw
+    before: list[str] = []
+    after: list[str] = []
+    seen_table = False
+    for block in unit.blocks:
+        if block.kind == "table":
+            seen_table = True
+        elif block.kind == "paragraph" and block.text:
+            (after if seen_table else before).append(block.text)
+    context_tokens = estimate_tokens("\n\n".join([*before, *after]))
     rows = raw.get("rows", [])
     semantic = raw.get("semantic_rows")
     if semantic:
         schema, _, body_groups = _plan_semantic_groups(raw)
         body_rows = semantic[1:]
         body_indexed = [list(_row_values(r)) for r in body_rows]
-        packed = _pack_groups(body_groups, body_indexed, schema)
+        packed = _pack_groups(body_groups, body_indexed, schema, context_tokens)
     else:
         schema, _, body_groups = _plan_raw_groups(raw)
         body_indexed = [list(_row_values(r)) for r in rows[1:]]
         body_groups_idx = [[r - 1 for r in group] for group in body_groups]
-        packed = _pack_groups(body_groups_idx, body_indexed, schema)
+        packed = _pack_groups(body_groups_idx, body_indexed, schema, context_tokens)
 
     chunks = []
     for group_rows in packed:
-        content = _render_markdown(schema, group_rows)
-        group_label = " | ".join(x for x in (body_indexed[0] if body_indexed else []) if x)[:60]
+        content = "\n\n".join([*before, _render_markdown(schema, group_rows), *after])
+        group_label = " | ".join(x for x in (group_rows[0] if group_rows else []) if x)[:60]
         meta = _base_meta(doc, unit)
+        meta.kind = "TABLE"
         meta.semantic_type = "table"
-        meta.block_types = ["table"]
+        meta.block_types = list(dict.fromkeys(block.kind for block in unit.blocks))
         meta.table_id = table_id
         meta.row_group = [group_label]
-        text = (
-            _breadcrumb(doc, unit)
-            + "\n"
-            + meta.table_id
-            + "\n"
-            + _schema_serialized(schema)
-            + "\n"
-            + content
-        )
+        text = _retrieval_text(unit.title, content)
         chunks.append(_finalize(meta, content, text))
     _link_chunks(chunks)
     return chunks
@@ -207,19 +347,27 @@ def _build_from_raw_table(doc: ParsedDocument, unit: SemanticUnit, table_id: str
 def _build_register(doc: ParsedDocument, unit: SemanticUnit) -> Chunk:
     blocks = unit.blocks
     parts = []
+    retrieval_parts = []
+    code_refs = []
     for block in blocks:
         if block.kind == "heading" or block.kind == "paragraph":
             if block.text:
                 parts.append(block.text)
+                retrieval_parts.append(block.text)
         elif block.kind == "table":
             raw = block.raw
             rows = raw.get("rows", [])
             if rows:
-                parts.append(
-                    _render_markdown(
-                        list(_row_values(rows[0])), [list(_row_values(r)) for r in rows[1:]]
-                    )
+                table = _render_markdown(
+                    list(_row_values(rows[0])), [list(_row_values(r)) for r in rows[1:]]
                 )
+                parts.append(table)
+                retrieval_parts.append(table)
+        elif block.kind == "code":
+            segment = _code_segment(block, unit)
+            parts.append(_render_fenced_code(segment["text"], segment["language"]))
+            retrieval_parts.append(segment["text"])
+            code_refs.append(segment["code_ref"])
     content = "\n\n".join(parts)
     bits = _serialize_bits(unit.table_raw) if unit.table_raw else ""
     text = (
@@ -229,16 +377,18 @@ def _build_register(doc: ParsedDocument, unit: SemanticUnit) -> Chunk:
     )
     if bits:
         text += "位定义：\n" + bits
-    text += "\n" + content
+    text += "\n" + "\n\n".join(retrieval_parts)
     meta = _base_meta(doc, unit)
+    meta.kind = "MIXED"
     meta.semantic_type = "register"
     meta.atomic = True
     meta.block_types = ["heading", "table", "paragraph"]
     meta.register = unit.register_name or ""
     meta.object_key = unit.register_name or ""
+    meta.code_refs = code_refs
     chunk = _finalize(meta, content, text)
     chunk.metadata.block_types = [
-        b.kind for b in blocks if b.kind in ("heading", "paragraph", "table")
+        b.kind for b in blocks if b.kind in ("heading", "paragraph", "table", "code")
     ]
     return chunk
 
@@ -247,24 +397,69 @@ def _build_figure(doc: ParsedDocument, unit: SemanticUnit) -> Chunk:
     block = unit.blocks[0]
     raw = block.raw
     image_ref = raw.get("image_ref", "")
-    hint = raw.get("hint", "image")
     annotations = raw.get("annotations", "")
+    description = block.description or {}
     content = f"![图]({image_ref})"
     if annotations:
         content += f"\n<!-- annotations: {annotations} -->"
-    text = _breadcrumb(doc, unit) + f"\n类型：图（{hint}）\n图像：{image_ref}"
-    if annotations:
-        text += "\n" + _collapse(annotations)
+    facts = description.get("full") or _collapse(annotations)
+    text = _retrieval_text(unit.title, facts)
+    labels = description.get("labels") or []
+    extra_labels: list[str] = []
+    for label in labels:
+        if label and label not in extra_labels and not _label_in_text(label, text):
+            extra_labels.append(label)
+    if extra_labels:
+        text += "\n" + "、".join(extra_labels)
+    uncertainties = description.get("uncertainties") or []
     meta = _base_meta(doc, unit)
+    meta.kind = "VISUAL"
     meta.semantic_type = "figure"
     meta.block_types = ["snapshot"]
-    meta.image_ref = image_ref
-    return _finalize(meta, content, text)
+    meta.figure_id = block.figure_id
+    meta.figure_description_status = (
+        "described" if description else str(raw.get("description_status") or "missing")
+    )
+    meta.figure_uncertainties = list(uncertainties)
+    excluded = bool(raw.get("figure_excluded"))
+    if excluded:
+        meta.exclude_from_embedding = True
+    if description.get("full"):
+        meta.image_description = description["full"]
+    _apply_snapshot_metadata(meta, raw, image_ref)
+    if meta.figure_type == "code" and meta.extraction_method == "none":
+        meta.atomic = True
+        meta.structured = False
+        text = _breadcrumb(doc, unit) + "\n类型：待转录代码图"
+        if annotations:
+            text += "\n" + _collapse(annotations)
+    return _finalize(meta, content, text, exclude=excluded)
+
+
+def _code_segment(block: Block, unit: SemanticUnit) -> dict:
+    """An indivisible inline segment; its source stays separate from retrieval text."""
+    raw = block.raw
+    code_text = raw.get("code_text", "")
+    if not isinstance(code_text, str) or not code_text:
+        raise ValueError("inline code requires non-empty code_text")
+    language = _infer_code_language(raw, code_text, unit)
+    return {
+        "type": "code", "text": code_text, "language": language,
+        "source_pages": [block.page],
+        "code_ref": {
+            "figure_id": block.figure_id or str(raw.get("code_figure_id") or ""),
+            "sidecar_figure_id": str(raw.get("code_figure_id") or ""),
+            "image_ref": str(raw.get("image_ref") or ""),
+            "page": block.page, "bbox": list(raw.get("bbox") or []),
+            "language": language,
+        },
+    }
 
 
 def _build_toc(doc: ParsedDocument, unit: SemanticUnit) -> Chunk:
     text = "\n".join((b.text or "") for b in unit.blocks if b.text)
     meta = _base_meta(doc, unit)
+    meta.kind = "TEXT"
     meta.semantic_type = "toc"
     meta.block_types = ["text"]
     chunk = _finalize(meta, text, "")
@@ -272,54 +467,111 @@ def _build_toc(doc: ParsedDocument, unit: SemanticUnit) -> Chunk:
     return chunk
 
 
+def _text_segments(unit: SemanticUnit) -> list[dict]:
+    """Ordered paragraphs, recovered code and inline figure descriptions."""
+    segments: list[dict] = []
+    for block in unit.blocks:
+        if block.kind == "paragraph" and block.text and block.text.strip():
+            segments.append(
+                {"type": "paragraph", "text": block.text.strip(), "source_pages": [block.page]}
+            )
+        elif block.kind == "code":
+            segments.append(_code_segment(block, unit))
+        elif block.kind == "figure":
+            description = block.description or {}
+            segments.append(
+                {
+                    "type": "figure",
+                    "image_ref": block.raw.get("image_ref", ""),
+                    "figure_id": block.figure_id,
+                    "short": description.get("short", ""),
+                    "source_pages": [block.page],
+                }
+            )
+    return segments
+
+
+def _segment_tokens(segment: dict) -> int:
+    if segment["type"] in ("paragraph", "code"):
+        return estimate_tokens(segment["text"])
+    return estimate_tokens(segment.get("short") or "") + 4
+
+
 def _build_text(doc: ParsedDocument, unit: SemanticUnit) -> list[Chunk]:
-    paragraphs = [b.text.strip() for b in unit.blocks if b.kind == "paragraph" and b.text.strip()]
-    if not paragraphs:
+    segments = _text_segments(unit)
+    if not any(segment["type"] in ("paragraph", "code") for segment in segments):
+        # A figure-only section already has independent figure chunks. There is no
+        # prose to annotate, so do not duplicate it as a text wrapper.
         return []
 
-    # pack paragraphs; a group that exceeds NORMAL_MAX is split at sentence
-    # boundaries.  Never crosses a heading (a TextUnit is one section).
-    groups: list[list[str]] = []
-    current: list[str] = []
+    # pack segments; figures no longer break the flow, and an oversized paragraph run is
+    # split at sentence boundaries.  Never crosses a heading (a TextUnit is one section).
+    groups: list[list[dict]] = []
+    current: list[dict] = []
     tokens = 0
-    for para in paragraphs:
-        p_tokens = estimate_tokens(para)
-        if current and tokens + p_tokens > SOFT_MAX:
+    for segment in segments:
+        segment_tokens = _segment_tokens(segment)
+        if current and tokens + segment_tokens > SOFT_MAX:
             groups.append(current)
             current = []
             tokens = 0
-        current.append(para)
-        tokens += p_tokens
+        current.append(segment)
+        tokens += segment_tokens
     if current:
         groups.append(current)
 
-    packed: list[list[str]] = []
+    packed: list[list[dict]] = []
     for group in groups:
-        if sum(estimate_tokens(p) for p in group) <= NORMAL_MAX:
+        if sum(_segment_tokens(segment) for segment in group) <= NORMAL_MAX:
             packed.append(group)
             continue
-        sentence_group: list[str] = []
+        sentence_group: list[dict] = []
         s_tokens = 0
-        for sentence in _split_sentences(" ".join(group)):
-            st = estimate_tokens(sentence)
-            if sentence_group and s_tokens + st > SOFT_MAX:
-                packed.append([" ".join(sentence_group)])
-                sentence_group = []
-                s_tokens = 0
-            sentence_group.append(sentence)
-            s_tokens += st
+        for segment in group:
+            if segment["type"] != "paragraph":
+                st = _segment_tokens(segment)
+                if sentence_group and s_tokens + st > SOFT_MAX:
+                    packed.append(sentence_group)
+                    sentence_group = []
+                    s_tokens = 0
+                sentence_group.append(segment)
+                s_tokens += st
+                continue
+            for sentence in _split_sentences(segment["text"]):
+                st = estimate_tokens(sentence)
+                if sentence_group and s_tokens + st > SOFT_MAX:
+                    packed.append(sentence_group)
+                    sentence_group = []
+                    s_tokens = 0
+                sentence_group.append({**segment, "text": sentence})
+                s_tokens += st
         if sentence_group:
-            packed.append([" ".join(sentence_group)])
+            packed.append(sentence_group)
 
-    # semantic overlap: every chunk after the first carries the previous
-    # chunk's trailing sentences as a lead-in (same section only).
+    # semantic overlap: every chunk after the first carries the previous chunk's
+    # trailing sentences as a lead-in.  The tail comes from the original paragraphs,
+    # never from rendered content, so image references cannot leak into retrieval text.
     chunks: list[Chunk] = []
+    previous_paragraphs = ""
+    previous_pages: list[int] = []
     for i, group in enumerate(packed):
-        if i > 0:
-            prev_tail = _tail_sentences(chunks[-1].content, limit=60)
-            if prev_tail:
-                group = [prev_tail] + group
+        group_paragraphs = " ".join(
+            segment["text"] for segment in group if segment["type"] == "paragraph"
+        )
+        group_pages = sorted(
+            {page for s in group if s["type"] == "paragraph" for page in s.get("source_pages", [])}
+        )
+        if i > 0 and previous_paragraphs:
+            prev_tail = _tail_sentences(previous_paragraphs, limit=60)
+            if (prev_tail and estimate_tokens(prev_tail)
+                    + sum(_segment_tokens(s) for s in group) <= NORMAL_MAX):
+                group = [
+                    {"type": "paragraph", "text": prev_tail, "source_pages": previous_pages},
+                    *group,
+                ]
         chunks.append(_text_chunk(doc, unit, group, i))
+        previous_paragraphs = group_paragraphs
+        previous_pages = group_pages
     _link_chunks(chunks)
     return chunks
 
@@ -340,14 +592,47 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _text_chunk(
-    doc: ParsedDocument, unit: SemanticUnit, paragraphs: list[str], index: int
+    doc: ParsedDocument, unit: SemanticUnit, segments: list[dict], index: int
 ) -> Chunk:
-    content = "\n\n".join(paragraphs)
+    content_parts: list[str] = []
+    retrieval_parts: list[str] = []
+    figure_ids: list[str] = []
+    code_refs: list[dict] = []
+    for segment in segments:
+        if segment["type"] == "paragraph":
+            content_parts.append(segment["text"])
+            retrieval_parts.append(segment["text"])
+            continue
+        if segment["type"] == "code":
+            content_parts.append(_render_fenced_code(segment["text"], segment["language"]))
+            retrieval_parts.append(segment["text"])
+            code_refs.append(segment["code_ref"])
+            continue
+        content_parts.append(f'![图]({segment["image_ref"]})')
+        retrieval_parts.append(
+            f'[图：{segment["short"]}]' if segment.get("short") else "[图]"
+        )
+        if segment.get("figure_id"):
+            figure_ids.append(segment["figure_id"])
+    content = "\n\n".join(content_parts)
     meta = _base_meta(doc, unit)
+    meta.kind = "TEXT"
     meta.semantic_type = "text"
-    meta.block_types = ["paragraph"]
-    text = _breadcrumb(doc, unit) + "\n" + content
-    return _finalize(meta, content, text)
+    meta.block_types = list(dict.fromkeys(s["type"] for s in segments))
+    meta.code_refs = code_refs
+    meta.atomic = len(segments) == 1 and segments[0]["type"] == "code"
+    meta.figure_ids = sorted(set(figure_ids))
+    pages = sorted({page for s in segments for page in s.get("source_pages", [])})
+    if pages:
+        meta.source_pages = pages
+        meta.page_start, meta.page_end = pages[0], pages[-1]
+    text = _retrieval_text(unit.title, "\n\n".join(retrieval_parts))
+    notice = "".join(content.split())
+    reference_only = bool(re.fullmatch(
+        r"(?:指令集详细说明请到官网下载[:：].*指令说明"
+        r"|注[:：]关于.{1,30}应用请参照DEMO相关例程[。.]?)", notice
+    ))
+    return _finalize(meta, content, text, exclude=reference_only)
 
 
 def _base_meta(doc: ParsedDocument, unit: SemanticUnit) -> ChunkMetadata:
@@ -375,6 +660,7 @@ def _finalize(
     meta.embedding_text = embedding_text
     meta.chars = len(content)
     meta.tokens = estimate_tokens(content)
+    meta.embedding_tokens = estimate_tokens(embedding_text)
     meta.exclude_from_embedding = exclude
     return Chunk(
         metadata=meta,
@@ -474,5 +760,39 @@ def build_chunks(doc: ParsedDocument, units: list[SemanticUnit]) -> list[Chunk]:
         parent_chunks.append(parent)
         for child in children:
             child.parent_id = parent_id
+
+    # explicit text <-> figure associations (no recall strategy, relations only)
+    figure_by_id = {
+        chunk.metadata.figure_id: chunk
+        for chunk in level1
+        if chunk.metadata.semantic_type == "figure" and chunk.metadata.figure_id
+    }
+    for chunk in level1:
+        if chunk.metadata.semantic_type != "text":
+            continue
+        for figure_id in chunk.metadata.figure_ids:
+            figure = figure_by_id.get(figure_id)
+            if figure is None:
+                continue
+            if chunk.chunk_id not in figure.metadata.related_chunk_ids:
+                figure.metadata.related_chunk_ids.append(chunk.chunk_id)
+
+    # register packages also own figures in their section; links stay metadata-only so
+    # the atomic register package keeps its boundary.
+    register_by_section = {
+        chunk.metadata.section_id: chunk
+        for chunk in level1
+        if chunk.metadata.semantic_type == "register"
+    }
+    for figure in level1:
+        if figure.metadata.semantic_type != "figure" or not figure.metadata.figure_id:
+            continue
+        register = register_by_section.get(figure.metadata.section_id)
+        if register is None:
+            continue
+        if figure.metadata.figure_id not in register.metadata.figure_ids:
+            register.metadata.figure_ids.append(figure.metadata.figure_id)
+        if register.chunk_id not in figure.metadata.related_chunk_ids:
+            figure.metadata.related_chunk_ids.append(register.chunk_id)
 
     return level1 + parent_chunks

@@ -48,6 +48,10 @@ class SnapshotBlock:
     annotations: str = ""
     pp_order: int | None = None
     source: str = "pp"
+    figure_type: str | None = None
+    code_text: str | None = None
+    extraction_method: str | None = None
+    extraction_confidence: float | None = None
 
 
 Block = TextBlock | TableBlock | SnapshotBlock

@@ -1,0 +1,55 @@
+# Milvus 2.6.x is the supported server line for the pinned pymilvus==2.6.17 client.
+# This volume and network are RAG-only; never attach a stockpilot volume.
+services:
+  etcd:
+    # Match the etcd version embedded in the existing Milvus image/data directory.
+    image: quay.io/coreos/etcd:v3.5.23
+    container_name: rag-etcd
+    command: ["etcd", "--config-file=/etc/etcd/rag.yaml"]
+    volumes:
+      - rag-milvus-data:/var/lib/milvus
+      - ./etcd.yaml:/etc/etcd/rag.yaml:ro
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - rag-milvus-net
+  standalone:
+    image: milvusdb/milvus:v2.6.21
+    container_name: rag-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      DEPLOY_MODE: STANDALONE
+      ETCD_USE_EMBED: "false"
+      ETCD_ENDPOINTS: etcd:2379
+      COMMON_STORAGETYPE: local
+    volumes:
+      - rag-milvus-data:/var/lib/milvus
+    ports:
+      - "19531:19530"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - rag-milvus-net
+
+volumes:
+  rag-milvus-data:
+    name: rag-milvus-data
+
+networks:
+  rag-milvus-net:
+    name: rag-milvus-net
+    driver: bridge

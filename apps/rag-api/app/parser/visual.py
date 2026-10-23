@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import re
+import statistics
+from dataclasses import dataclass
+
 from .anchor import Anchor
 from .models import BBox, NativeDrawing
 from .native_pdf import NativeLine, NativePage
@@ -19,6 +23,43 @@ _NEARBY_HORIZONTAL_OVERLAP = 0.2
 _LINE_HORIZONTAL_REACH_RATIO = 0.3
 _EXCLUSIVE_OVERLAP = 0.35
 _NEIGHBOR_BAND_OVERLAP = 0.25
+
+_MIN_CODE_LINES = 3
+_MAX_SHORT_CODE_LINE = 120
+_MAX_CODE_LINE = 200
+_CODE_SYMBOLS = frozenset("{}[]();#=<>:+-*/%&|!~,.\\")
+_CODE_KEYWORD_RE = re.compile(
+    r"(?:"
+    r"\b(?:void|int|long|short|char|float|double|bool|unsigned|signed|const|static|"
+    r"if|else|for|while|do|switch|case|break|continue|return|class|struct|enum|"
+    r"def|import|from|lambda|try|except|catch|finally|raise|with|yield|async|await|"
+    r"fn|let|mut|func|var|function|package|namespace|using|public|private|protected|"
+    r"SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b"
+    r"|#\s*(?:include|define|if|ifdef|ifndef|pragma)\b"
+    r"|//|/\*|\*/|<!--|-->"
+    r")",
+    re.I,
+)
+_CODE_OPERATOR_RE = re.compile(
+    r"(?:==|!=|<=|>=|=>|->|\+\+|--|&&|\|\||::|\+=|-=|\*=|/=|%=|<<|>>|:=)"
+)
+_CODE_SHAPE_RE = re.compile(
+    r"(?:[A-Za-z_$][\w$]*\s*\([^)]*\)|[A-Za-z_$][\w$]*\s*=|[{};]|^\s*[\[\]{},])"
+)
+_MONOSPACE_FONT_RE = re.compile(
+    r"(?:courier|consolas|monaco|menlo|monospace|mono|typewriter|fixed|code)", re.I
+)
+_CODE_CAPTION_RE = re.compile(r"(?:代码|程序|例程|源码|code|program|listing|snippet)", re.I)
+
+
+@dataclass(frozen=True)
+class CodeFigureDetection:
+    """Additive metadata for a snapshot classified as a code example."""
+
+    figure_type: str | None = None
+    code_text: str | None = None
+    extraction_method: str | None = None
+    extraction_confidence: float | None = None
 
 
 def refine_snapshot_anchors(native: NativePage, anchors: list[Anchor]) -> None:
@@ -77,6 +118,7 @@ def refine_snapshot_anchors(native: NativePage, anchors: list[Anchor]) -> None:
             ],
             vertical_context=context_boxes,
         )
+        annotate_code_figure(native, anchor)
 
 
 def add_recovered_visual_anchors(native: NativePage, anchors: list[Anchor]) -> list[Anchor]:
@@ -135,19 +177,267 @@ def add_recovered_visual_anchors(native: NativePage, anchors: list[Anchor]) -> l
         if any(_substantial_overlap(final_bbox, known) for known in [*exclusive, *recovered]):
             continue
 
-        anchors.append(
-            Anchor(
-                anchor_id=max((anchor.anchor_id for anchor in anchors), default=-1) + 1,
-                bbox=final_bbox,
-                pp_label="image",
-                pp_order=None,
-                kind="VISUAL",
-                source="native_visual",
-            )
+        recovered_anchor = Anchor(
+            anchor_id=max((anchor.anchor_id for anchor in anchors), default=-1) + 1,
+            bbox=final_bbox,
+            pp_label="image",
+            pp_order=None,
+            kind="VISUAL",
+            source="native_visual",
         )
+        annotate_code_figure(native, recovered_anchor)
+        anchors.append(recovered_anchor)
         recovered.append(final_bbox)
         exclusive.append(final_bbox)
     return anchors
+
+
+def detect_code_figure(native: NativePage, anchor: Anchor) -> CodeFigureDetection:
+    """Classify and losslessly recover a native-text code snapshot.
+
+    The decision is deliberately structural.  Captions can strengthen an
+    already code-shaped region but never turn prose or an unlabeled raster
+    image into code on their own.  A snapshot explicitly preclassified as
+    code by an upstream structural classifier is retained with method
+    ``none`` when no native text is recoverable.
+    """
+    if not _is_snapshot_anchor(anchor):
+        return CodeFigureDetection()
+
+    lines = _native_lines_in_bbox(native, anchor.bbox)
+    candidates = _candidate_line_groups(lines)
+    best: tuple[float, list[tuple[NativeLine, str]]] | None = None
+    auxiliary = " ".join(
+        part
+        for part in (
+            str(getattr(anchor, "pp_label", "") or ""),
+            str(getattr(anchor, "text", "") or ""),
+            *(text for _, text in lines),
+        )
+        if part
+    )
+    for candidate in candidates:
+        scored = _score_code_lines(candidate, auxiliary)
+        if scored is not None and (best is None or scored[0] > best[0]):
+            best = scored
+
+    if best is not None:
+        code_text = "\n".join(text for _, text in best[1])
+        return CodeFigureDetection(
+            figure_type="code",
+            code_text=code_text,
+            extraction_method="native",
+            extraction_confidence=1.0,
+        )
+
+    preclassified = str(getattr(anchor, "figure_type", "") or "").lower() == "code"
+    explicit_label = str(getattr(anchor, "pp_label", "") or "").lower() in {
+        "code",
+        "code_block",
+        "program",
+        "program_listing",
+    }
+    if preclassified or explicit_label:
+        return CodeFigureDetection(
+            figure_type="code",
+            extraction_method="none",
+        )
+    return CodeFigureDetection()
+
+
+def annotate_code_figure(
+    native: NativePage,
+    anchor: Anchor,
+    target: object | None = None,
+) -> CodeFigureDetection:
+    """Attach code metadata to an anchor or its eventual SnapshotBlock.
+
+    ``target`` keeps the detector independent of PageIR and avoids a parser
+    import cycle.  Callers that already own a SnapshotBlock can pass it here;
+    the ordinary refinement path records the same additive fields on Anchor.
+    """
+    detection = detect_code_figure(native, anchor)
+    target = anchor if target is None else target
+    for name in (
+        "figure_type",
+        "code_text",
+        "extraction_method",
+        "extraction_confidence",
+    ):
+        setattr(target, name, getattr(detection, name))
+    return detection
+
+
+def _native_lines_in_bbox(native: NativePage, bbox: BBox) -> list[tuple[NativeLine, str]]:
+    selected: list[tuple[NativeLine, str]] = []
+    for line in native.lines:
+        text = _lossless_native_line_text(line)
+        if not text.strip():
+            continue
+        if (
+            bbox.x0 - 1.0 <= line.bbox.cx <= bbox.x1 + 1.0
+            and bbox.y0 - 1.0 <= line.bbox.cy <= bbox.y1 + 1.0
+        ):
+            selected.append((line, text))
+    return sorted(selected, key=lambda item: (item[0].bbox.y0, item[0].bbox.x0))
+
+
+def _lossless_native_line_text(line: NativeLine) -> str:
+    """Return PDF text-layer characters without trimming code indentation."""
+    if not line.spans:
+        return line.text
+    return "".join(span.text for span in line.spans)
+
+
+def _candidate_line_groups(
+    lines: list[tuple[NativeLine, str]],
+) -> list[list[tuple[NativeLine, str]]]:
+    if len(lines) < _MIN_CODE_LINES:
+        return []
+    groups: list[list[tuple[NativeLine, str]]] = [lines]
+    by_block: dict[int, list[tuple[NativeLine, str]]] = {}
+    for item in lines:
+        block_id = item[0].block_id
+        if block_id >= 0:
+            by_block.setdefault(block_id, []).append(item)
+    groups.extend(group for group in by_block.values() if len(group) >= _MIN_CODE_LINES)
+    return groups
+
+
+def _score_code_lines(
+    lines: list[tuple[NativeLine, str]],
+    auxiliary: str,
+) -> tuple[float, list[tuple[NativeLine, str]]] | None:
+    if len(lines) < _MIN_CODE_LINES:
+        return None
+
+    normalized = [text.strip() for _, text in lines]
+    core = [
+        bool(
+            _CODE_KEYWORD_RE.search(text)
+            or _CODE_OPERATOR_RE.search(text)
+            or _CODE_SHAPE_RE.search(text)
+        )
+        for text in normalized
+    ]
+    if sum(core) < 2:
+        return None
+
+    first_core = core.index(True)
+    last_core = len(core) - 1 - core[::-1].index(True)
+    code_lines = lines[first_core : last_core + 1]
+    code_texts = [text.strip() for _, text in code_lines]
+    if len(code_lines) < _MIN_CODE_LINES or not _has_single_column_flow(code_lines):
+        return None
+
+    nonspace = sum(len(re.sub(r"\s+", "", text)) for text in code_texts)
+    symbols = sum(sum(ch in _CODE_SYMBOLS for ch in text) for text in code_texts)
+    symbol_density = symbols / max(nonspace, 1)
+    keyword_lines = sum(bool(_CODE_KEYWORD_RE.search(text)) for text in code_texts)
+    operator_lines = sum(
+        bool(_CODE_OPERATOR_RE.search(text) or _CODE_SHAPE_RE.search(text))
+        for text in code_texts
+    )
+    structural_lines = sum(
+        bool(
+            _CODE_KEYWORD_RE.search(text)
+            or _CODE_OPERATOR_RE.search(text)
+            or _CODE_SHAPE_RE.search(text)
+        )
+        for text in code_texts
+    )
+    short_ratio = sum(len(text) <= _MAX_SHORT_CODE_LINE for text in code_texts) / len(code_texts)
+    if (
+        max(len(text) for text in code_texts) > _MAX_CODE_LINE
+        or short_ratio < 0.67
+        or structural_lines / len(code_texts) < 0.45
+    ):
+        return None
+
+    caption_support = bool(_CODE_CAPTION_RE.search(auxiliary))
+    keyword_density = 0.025 if caption_support else 0.035
+    symbol_density_floor = 0.08 if caption_support else 0.10
+    keyword_shape = keyword_lines >= 1 and operator_lines >= 2 and symbol_density >= keyword_density
+    symbol_shape = (
+        operator_lines / len(code_texts) >= 0.60 and symbol_density >= symbol_density_floor
+    )
+    if not (keyword_shape or symbol_shape):
+        return None
+
+    indentation = _has_indentation(code_lines)
+    monospace = _has_monospace_layout(code_lines)
+    regular_rows = _has_regular_row_layout(code_lines)
+    if not (indentation or monospace or regular_rows):
+        return None
+
+    score = (
+        structural_lines / len(code_texts)
+        + min(symbol_density, 0.25) * 2.0
+        + (0.25 if indentation else 0.0)
+        + (0.20 if monospace else 0.0)
+        + (0.10 if regular_rows else 0.0)
+        + (0.05 if caption_support else 0.0)
+    )
+    return score, code_lines
+
+
+def _has_indentation(lines: list[tuple[NativeLine, str]]) -> bool:
+    if any(text[:1].isspace() for _, text in lines[1:]):
+        return True
+    starts = [line.bbox.x0 for line, _ in lines]
+    widths = [
+        line.bbox.w / max(len(text.strip()), 1)
+        for line, text in lines
+        if text.strip() and line.bbox.w > 0
+    ]
+    char_width = statistics.median(widths) if widths else 4.0
+    spread = max(starts) - min(starts)
+    return max(2.0, char_width * 0.65) <= spread <= char_width * 12.0
+
+
+def _has_single_column_flow(lines: list[tuple[NativeLine, str]]) -> bool:
+    """Reject table-cell collections with many same-baseline fragments."""
+    heights = [line.bbox.h for line, _ in lines if line.bbox.h > 0]
+    tolerance = max(1.0, (statistics.median(heights) if heights else 4.0) * 0.35)
+    row_centers: list[float] = []
+    for line, _ in lines:
+        if not row_centers or abs(line.bbox.cy - row_centers[-1]) > tolerance:
+            row_centers.append(line.bbox.cy)
+    return len(row_centers) >= _MIN_CODE_LINES and len(row_centers) * 4 >= len(lines) * 3
+
+
+def _has_monospace_layout(lines: list[tuple[NativeLine, str]]) -> bool:
+    styled = [span for line, _ in lines for span in line.spans if span.text.strip()]
+    if styled:
+        mono_chars = sum(
+            len(span.text.strip())
+            for span in styled
+            if _MONOSPACE_FONT_RE.search(span.font)
+        )
+        total_chars = sum(len(span.text.strip()) for span in styled)
+        if mono_chars / max(total_chars, 1) >= 0.60:
+            return True
+
+    char_widths = [
+        line.bbox.w / len(text.strip())
+        for line, text in lines
+        if len(text.strip()) >= 3 and line.bbox.w > 0
+    ]
+    if len(char_widths) < _MIN_CODE_LINES:
+        return False
+    mean = statistics.fmean(char_widths)
+    return mean > 0 and statistics.pstdev(char_widths) / mean <= 0.12
+
+
+def _has_regular_row_layout(lines: list[tuple[NativeLine, str]]) -> bool:
+    if len(lines) < _MIN_CODE_LINES:
+        return False
+    centers = [line.bbox.cy for line, _ in lines]
+    gaps = [right - left for left, right in zip(centers, centers[1:], strict=False) if right > left]
+    if len(gaps) < 2:
+        return False
+    mean = statistics.fmean(gaps)
+    return mean > 0 and statistics.pstdev(gaps) / mean <= 0.25
 
 
 def _is_snapshot_anchor(anchor: Anchor) -> bool:

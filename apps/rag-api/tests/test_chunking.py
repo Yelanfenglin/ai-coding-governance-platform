@@ -266,6 +266,24 @@ def test_semantic_rows_grouped_by_parent_row() -> None:
     assert all("| 名称 | 类型 | 说明 |" in c.content for c in tables)
 
 
+def test_split_table_labels_follow_their_rows_and_ids_stay_out_of_retrieval() -> None:
+    rows = [["名称", "说明"]] + [[f"ROW{i:02d}", "参数说明" * 45] for i in range(10)]
+    doc = _doc([_page(1, [
+        _text("heading", "1.4 参数表", "1.4", ["1 参数", "1.4 参数表"]),
+        _table(rows, "1.4", ["1 参数", "1.4 参数表"]),
+    ])])
+    chunks, _ = _chunks(doc)
+    tables = [c for c in chunks if c.metadata.semantic_type == "table"]
+    assert len(tables) > 1
+    assert tables[0].metadata.row_group != tables[1].metadata.row_group
+    for chunk in tables:
+        first_row = chunk.content.splitlines()[2].strip("| ").split(" | ")
+        assert chunk.metadata.row_group[0] == " | ".join(first_row)[:60]
+        assert chunk.metadata.table_id not in chunk.embedding_text
+        assert "| 名称 | 说明 |" in chunk.embedding_text
+    assert sum(c.content.count("ROW") for c in tables) == 10
+
+
 def test_figure_unit_carries_annotations() -> None:
     doc = _doc(
         [

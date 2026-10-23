@@ -124,6 +124,32 @@ def _run(
     return summary
 
 
+def parse_document(
+    pdf_path: str | Path,
+    layout_json: str | Path,
+    out_dir: str | Path,
+    *,
+    pages: list[int] | None = None,
+    dpi: int = 160,
+    allow_missing_layout: bool = False,
+    recover_native_tables: bool = True,
+) -> dict:
+    """Public ingestion entry: deterministic parse of one PDF into a parsed artifact.
+
+    Thin wrapper over :func:`_run` so the ingest pipeline never depends on a
+    private symbol. Returns the same summary dict as the CLI.
+    """
+    return _run(
+        pdf_path,
+        layout_json,
+        out_dir,
+        pages=pages,
+        dpi=dpi,
+        allow_missing_layout=allow_missing_layout,
+        recover_native_tables=recover_native_tables,
+    )
+
+
 def _ownership_stats(native, anchors) -> dict:
     native_ids = {(line.block_id, line.line_id) for line in native.lines if line.text.strip()}
     owners: Counter = Counter()
@@ -198,6 +224,15 @@ def _page_dict(page: PageIR) -> dict:
                     f"snapshots/{snapshot_filename(page.page_number, snapshot_ordinal, block.hint)}"
                 ),
             }
+            # R1: code-figure fields attached by visual.py (optional, additive).
+            for extra in (
+                "figure_type",
+                "code_text",
+                "extraction_method",
+                "extraction_confidence",
+            ):
+                if hasattr(block, extra) and getattr(block, extra) is not None:
+                    item[extra] = getattr(block, extra)
         else:
             continue
         item["block_index"] = block_index

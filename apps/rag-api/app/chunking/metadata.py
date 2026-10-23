@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+SEMANTIC_TYPES = ("text", "register", "table", "figure", "code", "toc", "parent", "revision")
+CHUNK_KINDS = ("TEXT", "TABLE", "VISUAL", "MIXED", "CODE")
+
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate for soft limits.
@@ -43,7 +46,8 @@ class ChunkMetadata:
     section_path: list[str] = field(default_factory=list)
     heading_level: int = 2
     # semantics & content
-    semantic_type: str = ""  # text|register|table|figure|toc|revision
+    kind: str = ""  # coarse kind: TEXT|TABLE|VISUAL|MIXED|CODE
+    semantic_type: str = ""  # SEMANTIC_TYPES
     block_types: list[str] = field(default_factory=list)
     register: str = ""
     table_id: str = ""
@@ -54,16 +58,28 @@ class ChunkMetadata:
     title: str = ""
     image_ref: str = ""
     image_description: str | None = None
+    figure_id: str = ""
+    figure_description_status: str = ""
+    figure_uncertainties: list[str] = field(default_factory=list)
+    figure_ids: list[str] = field(default_factory=list)
+    related_chunk_ids: list[str] = field(default_factory=list)
+    figure_type: str = ""
+    code_language: str = ""
+    code_refs: list[dict] = field(default_factory=list)
+    extraction_method: str = ""
+    extraction_confidence: float | None = None
     # provenance
     page_start: int = 0
     page_end: int = 0
     source_pages: list[int] = field(default_factory=list)
+    bbox: list[float] = field(default_factory=list)
     # quality / control
     structured: bool = True
     atomic: bool = False  # register / complete-example package, not split
     exclude_from_embedding: bool = False
     chars: int = 0
     tokens: int = 0
+    embedding_tokens: int = 0
     parser_version: str = ""
     chunker_version: str = "0.1.0"
 

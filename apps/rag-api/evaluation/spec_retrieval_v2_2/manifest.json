@@ -1,0 +1,89 @@
+{
+  "bank_version": "2.3.1",
+  "created_on": "2026-10-19",
+  "previous_version": "2.2.0-pilot",
+  "baseline_version": "2.1.0",
+  "statistics": {
+    "total_questions": 115,
+    "positive_questions": 107,
+    "scope_boundary": 2,
+    "answer_boundary": 6,
+    "positive_sources": 16,
+    "unscoped_queries": 97,
+    "evidence_groups": 143,
+    "categories": {
+      "register_table": 18,
+      "text_fact": 22,
+      "code_example": 20,
+      "figure_semantics": 21,
+      "multi_evidence": 16,
+      "multi_source": 10,
+      "scope_boundary": 2,
+      "answer_boundary": 6
+    },
+    "splits": {
+      "development": 95,
+      "holdout": 20
+    },
+    "per_product": {
+      "M8P515": 17,
+      "M8P516": 9,
+      "M8P5170": 11,
+      "M8P613": 9,
+      "M8P615": 5,
+      "M8P625": 12,
+      "M8P626": 5,
+      "M8P6271": 7,
+      "M8P6272": 8,
+      "M8P632": 4,
+      "M8P634": 5,
+      "M9F6601": 5,
+      "M9F680": 5,
+      "M9F6820": 5,
+      "M9P6362": 5,
+      "M9P6363": 5
+    }
+  },
+  "rules_statistics": {
+    "evidence_groups": 143,
+    "fact_groups": 120,
+    "code_groups": 23,
+    "pending_description_update": 0,
+    "metadata_dependent": [
+      "R036-E1"
+    ]
+  },
+  "split_policy": "95 development + 20 holdout; holdout reserved after freeze",
+  "holdout_status": "reserved_unrun_assistant_authored_not_independent_blind_test",
+  "runtime_retrieval_evaluation": "not_run",
+  "independent_engineer_review": "pending",
+  "assistant_review": "original_PDF_text_and_selected_code_images_checked",
+  "current_pg_content_and_mapping": "verified_read_only_20261019",
+  "model_api_calls": {
+    "generation": "not_recorded_for_B_expansion",
+    "validation": 0,
+    "retrieval": 0
+  },
+  "embedding_api_calls": 0,
+  "query_design": "coverage_gaps_and_original_sources_before_runtime_scores",
+  "input_fingerprint": "54b5971041e3aadfd63f86665fbe68f3eaa33641b47ca6a4d316379abf3ba0df",
+  "files": {
+    "corpus.json": "0a22ede91eefda34a2495381c4fa6271fa03f6b20ca502ea49ce9586a887b5b4",
+    "current_chunk_mapping.jsonl": "77c2dbd2e50f2502afb772d7d44031fbc663f65b5452cc0a7a83f3c4c31feef5",
+    "evidence_rules.json": "81fc3c111be8839828c36a2935e8eea11764430673dd8565c37a35df3f836957",
+    "judgment_template.jsonl": "92cc84cb686cc1ea6f9192fe4940194264706a147d772eda4eb132382e720da3",
+    "queries.jsonl": "54b5971041e3aadfd63f86665fbe68f3eaa33641b47ca6a4d316379abf3ba0df",
+    "queries_development.jsonl": "f91e077454b6a3f71882380248c9c4591f2f049705350e4f74fbd3368abec412",
+    "queries_holdout.jsonl": "aee9203dbf5c9283475a5bfa1f2b55259f18dcb903868cf7d6114578d7dd9694",
+    "queries_unscoped.jsonl": "3ae6d845e52bcf3fc6ed66a69dc8d06bf49c888e71a619a8630261a519add30a",
+    "questions.jsonl": "0f9b710c35765206e00ce64098d7e6725f88b80506f6d045f08278d2e5bbc26a",
+    "README.md": "79e340a6ff14055870850288efd225bd634649739645f96c423f77a29fa8ae9f",
+    "score_results.py": "86c6db0d55d7a8e8cf956103de88b1f22f7bac9dc2b95aa825f904240be4a197",
+    "test_scoring_contract.py": "667823442879c3de189c13dd1c17c1f0f9f69f18dd29bb9681c5711a56baee3e",
+    "validate_bank.py": "4fde886398ad4683cca0b6cfc46be7dd5302daa7fe0425420cda9209c91bbda3",
+    "题库.md": "129bf40fd9fe97b13a5235aeebb9a932c299c18aa4a3bb3338dff25d78d1a43e"
+  },
+  "original_pdfs_checked": "not_rechecked_in_repair",
+  "generation_source": "v2.2 prior bank + B expansion via DeepSeek; questions pending independent expert review",
+  "validation_source": "local static validator + scoring contract tests"
+}

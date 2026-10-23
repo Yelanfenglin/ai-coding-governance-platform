@@ -1,6 +1,6 @@
 # rag-api
 
-产品规格书 RAG 的独立服务目录。目前完成的是第一阶段：确定性的 PDF 文档解析与结构重建。检索、向量入库和问答 API 仍以 `../../docs/rag-knowledge-base-design.md` 为设计边界，不在本阶段伪装成已实现。
+产品规格书 RAG 的独立服务：PDF 解析与结构重建、PostgreSQL 文档与 chunk 管理、Milvus 向量检索、BM25/RRF、上下文扩展与带引用问答。Agent 通过 HTTP 调用检索和原文上下文接口。
 
 ## 当前目录
 
@@ -23,7 +23,37 @@ storage/chunks/             chunk 层产物（chunks.jsonl），不提交
 
 旧版 `parser_v0` 和 `parser_v1_minimal` 已收敛为唯一入口 `app.parser`。解析代码不依赖 PostgreSQL、Milvus 或外部 LLM。
 
-Phase 2 的 PostgreSQL、Milvus、embedding、chunking 和 API 只保留在设计文档中。当前不提交无调用者、无迁移、无测试的半成品脚手架；进入 Phase 2 时按已确认契约完整落地。
+服务入口为 `app/main.py`，数据迁移位于 `alembic/`，入库入口为 `app.ingest.cli`，检索编排位于 `app/retrieval/`。planner、filters、trace 等行为以 `app/settings.py` 的默认配置为准；存在实现不代表默认启用。
+
+## 服务启动与评测
+
+在本目录创建项目虚拟环境并安装 `.[dev]`，将 `.env.example` 复制为 `.env`，配置独立的 PostgreSQL `rag_kb` 数据库及对应账号。数据库、PDF、解析缓存和密钥不随代码分发。
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+.venv/Scripts/python.exe -m alembic upgrade head
+docker compose -f infra/milvus/compose.yaml up -d
+.venv/Scripts/python.exe -B scripts/serve.py
+```
+
+Milvus 的版本、数据卷和启动顺序见 [本地部署说明](infra/milvus/README.md)。服务默认前缀为 `/api/rag`；配置 `RAG_API_KEY` 后请求带 `X-API-Key`。常用接口为：
+
+- `GET /api/rag/health`：数据库、向量库和 provider 健康检查。
+- `GET /api/rag/search`：按问题、型号与版本检索。
+- `GET /api/rag/documents/{doc_id}/context/{chunk_id}`：展开证据上下文。
+- `POST /api/rag/query`：检索、生成与引用检查。
+
+Agent 的 `RAG_API_URL` 应包含 `/api/rag`。工程任务联调范围见 [Agent 验收摘要](../agent-runtime/docs/acceptance-20261023.md)。
+
+默认测试不调用付费模型；真实数据库和向量库测试以 integration 标记单独执行：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q -m "not integration"
+.venv/Scripts/python.exe -B evaluation/runner.py validate
+.venv/Scripts/python.exe -B evaluation/runner.py score --run-dir <冻结产物目录> --split development
+```
+
+题库和评分脚本在 `evaluation/`；`validate` 需恢复冻结的 chunk 文件，原文校验还需 `--pdf-root`。历史模型请求、检索 run 和评测输出保存在本地 `output/`，未入库；`regression` / `status` 需要对应历史输入，缺失时返回非零，不能把空输入当作通过。`output/regression_set_20261020/check.py` 是现有 runner 直接加载的源码例外，单独保留。
 
 ## 解析流程
 
