@@ -1,0 +1,53 @@
+{
+  "id": "usart_from_scratch",
+  "seed": "../fixtures/pwm_before_usart",
+  "question": "在 M9P6362 V1.16 的现有 PWM0＋TC1 工程里，从零增加 USART0 模块。保持 32MHz/8T、PWM0 20kHz/30%、TC1 和原业务；TC1_Work.c、COMMON.H、MASSESCHIP_DEFINE.H、原 PWM0 的 c/h 不修改。需求是 IOA0 TX、IOA1 RX，115200bps、8N1、波特率误差不超过2%，非阻塞收发；接收用高优先级中断，坏帧丢弃，发送用主循环 Poll 推进，不开 TX 中断。查规格与官方例程后实施。",
+  "validation_layer": "native_manual_and_host_simulation",
+  "checks": [
+    {
+      "id": "manifest",
+      "kind": "manifest"
+    },
+    {
+      "id": "preserved_TC1_Work.c",
+      "kind": "unchanged",
+      "path": "TC1_Work.c"
+    },
+    {
+      "id": "preserved_COMMON.H",
+      "kind": "unchanged",
+      "path": "COMMON.H"
+    },
+    {
+      "id": "preserved_MASSESCHIP_DEFINE.H",
+      "kind": "unchanged",
+      "path": "MASSESCHIP_DEFINE.H"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_pwm0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.c"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_pwm0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.h"
+    },
+    {
+      "id": "host_behavior",
+      "kind": "command",
+      "command": [
+        "{python}",
+        "{evaluation}/checks/firmware.py",
+        "--workspace",
+        "{workspace}",
+        "--seed",
+        "{evaluation}/fixtures/pwm_before_usart",
+        "--out",
+        "{out}/host",
+        "--duty-register",
+        "60"
+      ]
+    }
+  ]
+}

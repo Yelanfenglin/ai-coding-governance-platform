@@ -1,0 +1,32 @@
+[Project]
+Project=ZCW-ICE
+[File Count]
+Count=10
+[Filter Index]
+Index=2
+[Project Files]
+File0=MASSESCHIP_DEFINE.H
+File1=demo_app.c
+File2=demo_app.h
+File3=demo_platform.c
+File4=demo_platform.h
+File5=main.C
+File6=modules\demo_pwm0.c
+File7=modules\demo_pwm0.h
+File8=modules\demo_timer1.c
+File9=modules\demo_timer1.h
+[Settings]
+Device=M9P6362
+ConfigBitValue0=200
+ConfigBitValue1=0
+ConfigBitValue2=85
+ConfigBitValue3=64
+ConfigBitValue4=0
+ConfigBitValue5=143
+ConfigBitValue6=0
+ConfigBitValue7=0
+ConfigBitValue8=80
+Output=.
+PostBuild=0
+PostBuildCommand=
+ConfigBitValue9=0

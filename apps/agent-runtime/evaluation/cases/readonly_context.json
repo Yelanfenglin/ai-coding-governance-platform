@@ -1,0 +1,97 @@
+{
+  "id": "readonly_context",
+  "seed": "../fixtures/pwm_usart",
+  "question": "先只读核对这份 M9P6362 V1.16 工程：PWM0 当前频率和占空比是多少，USART0 当前波特率是多少？给出对应文件依据，并指出后续修改可以运行什么验证。暂不修改任何工程文件，不要提前实施参数变更。最后附一段 JSON，字段为 frequency_hz、duty_percent、baudrate。",
+  "checks": [
+    {
+      "id": "manifest",
+      "kind": "manifest"
+    },
+    {
+      "id": "unchanged_agent_demo_demo_app.c",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_app.c"
+    },
+    {
+      "id": "unchanged_agent_demo_demo_app.h",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_app.h"
+    },
+    {
+      "id": "unchanged_agent_demo_demo_platform.h",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_platform.h"
+    },
+    {
+      "id": "unchanged_agent_demo_modules_demo_pwm0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.c"
+    },
+    {
+      "id": "unchanged_agent_demo_modules_demo_pwm0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.h"
+    },
+    {
+      "id": "unchanged_agent_demo_modules_demo_usart0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.c"
+    },
+    {
+      "id": "unchanged_agent_demo_modules_demo_usart0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.h"
+    },
+    {
+      "id": "unchanged_agent_demo_SOURCES.md",
+      "kind": "unchanged",
+      "path": "agent_demo/SOURCES.md"
+    },
+    {
+      "id": "unchanged_agent_demo_tools_pwm0_calc.py",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/pwm0_calc.py"
+    },
+    {
+      "id": "unchanged_agent_demo_tools_usart0_calc.py",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/usart0_calc.py"
+    },
+    {
+      "id": "unchanged_agent_demo_tools_usart0_host_test.c",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/usart0_host_test.c"
+    },
+    {
+      "id": "unchanged_COMMON.H",
+      "kind": "unchanged",
+      "path": "COMMON.H"
+    },
+    {
+      "id": "unchanged_demo-project.json",
+      "kind": "unchanged",
+      "path": "demo-project.json"
+    },
+    {
+      "id": "unchanged_M9P6362_TC1.prj",
+      "kind": "unchanged",
+      "path": "M9P6362_TC1.prj"
+    },
+    {
+      "id": "unchanged_main.C",
+      "kind": "unchanged",
+      "path": "main.C"
+    },
+    {
+      "id": "unchanged_MASSESCHIP_DEFINE.H",
+      "kind": "unchanged",
+      "path": "MASSESCHIP_DEFINE.H"
+    },
+    {
+      "id": "unchanged_TC1_Work.c",
+      "kind": "unchanged",
+      "path": "TC1_Work.c"
+    }
+  ],
+  "validation_layer": "read-only project facts and file preservation"
+}

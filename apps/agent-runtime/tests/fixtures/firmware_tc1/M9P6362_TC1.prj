@@ -1,0 +1,50 @@
+[Project]
+Project=ZCW-ICE
+[File Count]
+Count=4
+[Filter Index]
+Index=2
+[Project Files]
+File0=COMMON.H
+File1=main.C
+File2=MASSESCHIP_DEFINE.H
+File3=TC1_Work.c
+[Settings]
+Device=M9P6362
+ConfigBitValue0=200
+ConfigBitValue1=0
+ConfigBitValue2=85
+ConfigBitValue3=120
+ConfigBitValue4=0
+ConfigBitValue5=143
+ConfigBitValue6=0
+ConfigBitValue7=0
+ConfigBitValue8=80
+Output=.
+PostBuild=0
+PostBuildCommand=
+ConfigBitValue9=0
+[Files]
+File0=MASSESCHIP_DEFINE.H|1 5 1677 24 700
+OpenFileCounts=4
+File1=COMMON.H|1 5 1677 24 700
+File2=TC1_Work.c|1 5 1677 24 700
+File3=main.C|1 5 1677 24 700
+[Break]
+Count=0
+[Watch0]
+Count=1
+Watch0=IOD 0
+[Watch1]
+Count=0
+[Watch2]
+Count=0
+[RomArea]
+Start=
+End=
+CodeOffset=
+Operation=2
+WarningLevel=-3
+[ParaSetting]
+ReadOnly=1
+ShowChipName=1

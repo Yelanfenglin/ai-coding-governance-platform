@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-coding-governance-agent-runtime"
+version = "0.1.0"
+description = "ReAct-style agent runtime: turn/step loop, tool execution, and session event log"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+agent-runtime = "app.cli:main"
+agent-evaluate = "evaluation.runner:main"
+
+[project.optional-dependencies]
+http = ["httpx>=0.28,<1"]
+dev = ["pytest>=8.4,<9", "pytest-asyncio>=0.25,<2", "ruff>=0.16,<1"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "evaluation*"]
+
+[tool.setuptools.package-data]
+"app.demos" = ["SKILL.md"]
+"evaluation" = ["cases/*.json", "fixtures/**/*", "protocols/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+  "integration: requires an explicitly configured external test dependency",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# output/ 是验收产物与上游源码缓存，不属于本包代码。
+exclude = [".venv", "output", "evaluation/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

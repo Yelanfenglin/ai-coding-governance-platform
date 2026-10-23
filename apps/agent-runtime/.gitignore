@@ -1,0 +1,6 @@
+/.agent-runtime/
+/output/
+/build/
+/dist/
+/runs/
+/stub-ready

@@ -1,0 +1,72 @@
+{
+  "id": "referenced_pwm_change",
+  "seed": "../fixtures/pwm_usart",
+  "question": "你上一答已经核对了 PWM0 是20kHz/30%，串口配置目标115200、实际约115942。现在把刚才那个占空比改成40%，频率和串口保持原样，TC1与原业务也保持。请真正改好并验证，更新必要的实际值、参数和来源说明。串口源文件与串口脚本不修改；你指出的串口脚本误报先保留，本轮不要扩大修整。",
+  "validation_layer": "adaptive conversation, host behavior and protected files",
+  "checks": [
+    {
+      "id": "manifest",
+      "kind": "manifest"
+    },
+    {
+      "id": "duty",
+      "kind": "json_value",
+      "path": "demo-project.json",
+      "pointer": "/modules/0/actual/duty_percent",
+      "expected": 40
+    },
+    {
+      "id": "frequency",
+      "kind": "json_value",
+      "path": "demo-project.json",
+      "pointer": "/modules/0/actual/frequency_hz",
+      "expected": 20000
+    },
+    {
+      "id": "preserved_TC1_Work.c",
+      "kind": "unchanged",
+      "path": "TC1_Work.c"
+    },
+    {
+      "id": "preserved_COMMON.H",
+      "kind": "unchanged",
+      "path": "COMMON.H"
+    },
+    {
+      "id": "preserved_MASSESCHIP_DEFINE.H",
+      "kind": "unchanged",
+      "path": "MASSESCHIP_DEFINE.H"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_usart0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.c"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_usart0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.h"
+    },
+    {
+      "id": "preserved_agent_demo_tools_usart0_calc.py",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/usart0_calc.py"
+    },
+    {
+      "id": "host_behavior",
+      "kind": "command",
+      "command": [
+        "{python}",
+        "{evaluation}/checks/firmware.py",
+        "--workspace",
+        "{workspace}",
+        "--seed",
+        "{evaluation}/fixtures/pwm_usart",
+        "--out",
+        "{out}/host",
+        "--duty-register",
+        "80"
+      ]
+    }
+  ]
+}

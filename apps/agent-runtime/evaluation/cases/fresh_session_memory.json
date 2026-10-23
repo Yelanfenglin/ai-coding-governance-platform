@@ -1,0 +1,102 @@
+{
+  "id": "fresh_session_memory",
+  "seed": "../fixtures/pwm_usart_25",
+  "question": "这是一个新对话。仅根据你保存的项目记忆，告诉我这个工程最终约定的 PWM0 频率、占空比和 USART0 目标波特率。不要读取工程文件，也不要搜索历史会话；记忆缺失就明确说缺失，不要猜。先给一段 JSON：frequency_hz、duty_percent、baudrate_target，再简短说明来源。不要修改工程或记忆。",
+  "checks": [
+    {
+      "id": "preserved_agent_demo_demo_app.c",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_app.c"
+    },
+    {
+      "id": "preserved_agent_demo_demo_app.h",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_app.h"
+    },
+    {
+      "id": "preserved_agent_demo_demo_platform.h",
+      "kind": "unchanged",
+      "path": "agent_demo/demo_platform.h"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_pwm0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.c"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_pwm0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_pwm0.h"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_usart0.c",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.c"
+    },
+    {
+      "id": "preserved_agent_demo_modules_demo_usart0.h",
+      "kind": "unchanged",
+      "path": "agent_demo/modules/demo_usart0.h"
+    },
+    {
+      "id": "preserved_agent_demo_SOURCES.md",
+      "kind": "unchanged",
+      "path": "agent_demo/SOURCES.md"
+    },
+    {
+      "id": "preserved_agent_demo_tools_pwm0_calc.py",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/pwm0_calc.py"
+    },
+    {
+      "id": "preserved_agent_demo_tools_usart0_calc.py",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/usart0_calc.py"
+    },
+    {
+      "id": "preserved_agent_demo_tools_usart0_host_test.c",
+      "kind": "unchanged",
+      "path": "agent_demo/tools/usart0_host_test.c"
+    },
+    {
+      "id": "preserved_COMMON.H",
+      "kind": "unchanged",
+      "path": "COMMON.H"
+    },
+    {
+      "id": "preserved_demo-project.json",
+      "kind": "unchanged",
+      "path": "demo-project.json"
+    },
+    {
+      "id": "preserved_M9P6362_TC1.prj",
+      "kind": "unchanged",
+      "path": "M9P6362_TC1.prj"
+    },
+    {
+      "id": "preserved_main.C",
+      "kind": "unchanged",
+      "path": "main.C"
+    },
+    {
+      "id": "preserved_MASSESCHIP_DEFINE.H",
+      "kind": "unchanged",
+      "path": "MASSESCHIP_DEFINE.H"
+    },
+    {
+      "id": "preserved_TC1_Work.c",
+      "kind": "unchanged",
+      "path": "TC1_Work.c"
+    },
+    {
+      "id": "recalled_facts",
+      "kind": "memory_recall",
+      "expected": {
+        "frequency_hz": 20000,
+        "duty_percent": 25,
+        "baudrate_target": 115200
+      }
+    }
+  ],
+  "validation_layer": "new-session memory facts, no file/history lookup"
+}

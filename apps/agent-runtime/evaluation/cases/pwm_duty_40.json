@@ -1,0 +1,14 @@
+{
+  "id": "pwm_duty_40",
+  "seed": "../fixtures/pwm_usart",
+  "question": "在已有 PWM+USART 工程中，只把 PWM 占空比从 30% 改为 40%，频率保持 20kHz，保留 TC1、串口和原业务，执行可用验证并同步清单。",
+  "validation_layer": "host_simulation_and_manifest",
+  "checks": [
+    {"id": "manifest_consistent", "kind": "manifest"},
+    {"id": "duty", "kind": "json_value", "path": "demo-project.json", "pointer": "/modules/0/actual/duty_percent", "expected": 40},
+    {"id": "frequency", "kind": "json_value", "path": "demo-project.json", "pointer": "/modules/0/actual/frequency_hz", "expected": 20000},
+    {"id": "tc1_unchanged", "kind": "unchanged", "path": "TC1_Work.c"},
+    {"id": "sdk_definitions_unchanged", "kind": "unchanged", "path": "MASSESCHIP_DEFINE.H"},
+    {"id": "host_behavior", "kind": "command", "command": ["{python}", "{evaluation}/checks/firmware.py", "--workspace", "{workspace}", "--seed", "{evaluation}/fixtures/pwm_usart", "--out", "{out}/host", "--duty-register", "80"]}
+  ]
+}

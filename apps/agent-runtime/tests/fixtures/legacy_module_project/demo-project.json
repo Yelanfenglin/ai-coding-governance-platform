@@ -1,0 +1,135 @@
+{
+  "format": 1,
+  "product": "M9P6362",
+  "spec_version": "V1.16",
+  "demo_version": "V1.07",
+  "clock_hz": 32000000,
+  "modules": [
+    {
+      "resources": [
+        "TC0",
+        "PWM0",
+        "IO:C0",
+        "IO:C2"
+      ],
+      "init": "Demo_Pwm0_Init",
+      "poll": null,
+      "interrupt_high": null,
+      "actual": {
+        "frequency_hz": 2000.0,
+        "duty_percent": 30.4,
+        "period_register": 124,
+        "frequency_error_percent": 0.0,
+        "duty_error_points": 0.3999999999999986
+      },
+      "adaptations": [
+        "仅初始化所选通道",
+        "保留官方C0–C3映射",
+        "移除50ms开关/延时",
+        "显式复位TC0后分频",
+        "按固定预分频换算周期与占空比并报告实际值"
+      ],
+      "id": "pwm0",
+      "name": "PWM0 输出",
+      "parameters": {
+        "frequency_hz": 2000,
+        "duty_percent": 30,
+        "channels": [
+          0,
+          2
+        ]
+      },
+      "source": {
+        "archive": "M9P6362/M9P6362_Demo_V1.07.zip",
+        "url": "http://www.masses-chip.com/3090.html",
+        "download_url": "http://www.masses-chip.com/u/2026/03/M9P6362_Demo_V1.07.zip",
+        "member": "M9P6362_Demo_V1.07/M9P6362_PWM0/PWM0_Work.c"
+      },
+      "spec_sections": [
+        {
+          "section": "7.2",
+          "page": 56
+        },
+        {
+          "section": "7.6–7.7",
+          "page": 58
+        },
+        {
+          "section": "7.8",
+          "page": 59
+        },
+        {
+          "section": "6.9.3",
+          "page": 54
+        }
+      ]
+    },
+    {
+      "resources": [
+        "TC1",
+        "IO:C1"
+      ],
+      "init": "Demo_Timer1_Init",
+      "poll": "Demo_Timer1_Poll",
+      "interrupt_high": "Demo_Timer1_Interrupt",
+      "actual": {
+        "interval_us": 10000,
+        "period_register": 9999,
+        "interval_error_us": 0
+      },
+      "adaptations": [
+        "flag改为模块内volatile变量",
+        "全局中断由共享入口统一开放",
+        "指示端口按参数配置",
+        "提供独立中断/轮询/取事件接口"
+      ],
+      "id": "timer1",
+      "name": "TC1 定时事件",
+      "parameters": {
+        "interval_us": 10000,
+        "toggle_pin": "C1"
+      },
+      "source": {
+        "archive": "M9P6362/M9P6362_Demo_V1.07.zip",
+        "url": "http://www.masses-chip.com/3090.html",
+        "download_url": "http://www.masses-chip.com/u/2026/03/M9P6362_Demo_V1.07.zip",
+        "member": "M9P6362_Demo_V1.07/M9P6362_TC1/TC1_Work.c"
+      },
+      "spec_sections": [
+        {
+          "section": "8.1",
+          "page": 60
+        },
+        {
+          "section": "8.2",
+          "page": 61
+        },
+        {
+          "section": "8.5–8.6",
+          "page": 62
+        },
+        {
+          "section": "5.3",
+          "page": 40
+        }
+      ]
+    }
+  ],
+  "reserved_resources": [],
+  "managed_files": [
+    "MASSESCHIP_DEFINE.H",
+    "README.md",
+    "SOURCES.md",
+    "demo.prj",
+    "demo_app.c",
+    "demo_app.h",
+    "demo_platform.c",
+    "demo_platform.h",
+    "main.C",
+    "modules/demo_pwm0.c",
+    "modules/demo_pwm0.h",
+    "modules/demo_timer1.c",
+    "modules/demo_timer1.h"
+  ],
+  "static_structure": "passed"
+}

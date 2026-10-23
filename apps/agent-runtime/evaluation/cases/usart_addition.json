@@ -1,0 +1,10 @@
+{
+  "id": "usart_addition",
+  "seed": "../fixtures/pwm_before_usart",
+  "question": "保留现有 PWM、TC1 和业务功能，增加 IOA0/IOA1 的 USART0 115200 8N1 非阻塞收发，接收用高优先级中断，坏帧丢弃。查规格和例程后实现、验证并同步工程清单。",
+  "validation_layer": "host_simulation_and_manifest",
+  "checks": [
+    {"id": "manifest_consistent", "kind": "manifest"},
+    {"id": "host_behavior", "kind": "command", "command": ["{python}", "{evaluation}/checks/firmware.py", "--workspace", "{workspace}", "--seed", "{evaluation}/fixtures/pwm_before_usart", "--out", "{out}/host", "--duty-register", "60"]}
+  ]
+}

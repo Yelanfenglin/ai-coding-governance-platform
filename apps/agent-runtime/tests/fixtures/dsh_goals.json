@@ -1,0 +1,1067 @@
+{
+  "commit": "aa8262ec091698bae9a6b04773a6b5b06ad4aef2",
+  "prompts": [
+    {
+      "objective": "English \"quoted\"",
+      "round": "<goal_round>\nObjective: \"English \\\"quoted\\\"\"\nRound: 2/7\n\nContinue working toward the objective in this same session. Treat the current workspace, tool results, and durable session state as authoritative; inspect them instead of assuming earlier narration is still current. Make concrete progress and verify the result. Before claiming completion, gather evidence that the whole objective is achieved, read the current goal, and mark it complete. If work remains, leave the goal active for the next round. Follow the configured goal-tool policy before reporting a blocker.\n</goal_round>",
+      "complete": "<goal_complete>\nObjective: \"English \\\"quoted\\\"\"\nThe goal is marked complete and this autonomous run is ending. Write the closing message to the user now: state the outcome, summarize what was done and how it was verified, and point to the concrete results (files, commits, or other artifacts). Report only what earlier rounds and tool results in this session actually establish; when a detail is not in the session, say so instead of inventing it. Note anything the user should review or do next. Address the user directly. Do not call any more tools in this run; further work waits for the user's next instruction.\n</goal_complete>",
+      "blocked": "<goal_blocked>\nObjective: \"English \\\"quoted\\\"\"\nBlocked: \"missing \\\"SDK\\\"\"\nThe goal is marked blocked and this autonomous run is ending. Write the closing message to the user now: state what has been completed so far, describe the concrete blocking condition and what you tried, and say exactly what you need from the user to continue. Report only what earlier rounds and tool results in this session actually establish; when a detail is not in the session, say so instead of inventing it. Address the user directly. Do not call any more tools in this run; further work waits for the user's next instruction.\n</goal_blocked>"
+    },
+    {
+      "objective": "中文目标\n修改与验证",
+      "round": "<goal_round>\nObjective: \"中文目标\\n修改与验证\"\nRound: 2/7\n\nContinue working toward the objective in this same session. Treat the current workspace, tool results, and durable session state as authoritative; inspect them instead of assuming earlier narration is still current. Make concrete progress and verify the result. Before claiming completion, gather evidence that the whole objective is achieved, read the current goal, and mark it complete. If work remains, leave the goal active for the next round. Follow the configured goal-tool policy before reporting a blocker.\n</goal_round>",
+      "complete": "<goal_complete>\nObjective: \"中文目标\\n修改与验证\"\nThe goal is marked complete and this autonomous run is ending. Write the closing message to the user now: state the outcome, summarize what was done and how it was verified, and point to the concrete results (files, commits, or other artifacts). Report only what earlier rounds and tool results in this session actually establish; when a detail is not in the session, say so instead of inventing it. Note anything the user should review or do next. Address the user directly. Do not call any more tools in this run; further work waits for the user's next instruction.\n</goal_complete>",
+      "blocked": "<goal_blocked>\nObjective: \"中文目标\\n修改与验证\"\nBlocked: \"missing \\\"SDK\\\"\"\nThe goal is marked blocked and this autonomous run is ending. Write the closing message to the user now: state what has been completed so far, describe the concrete blocking condition and what you tried, and say exactly what you need from the user to continue. Report only what earlier rounds and tool results in this session actually establish; when a detail is not in the session, say so instead of inventing it. Address the user directly. Do not call any more tools in this run; further work waits for the user's next instruction.\n</goal_blocked>"
+    }
+  ],
+  "guidance": "Use goal tools for one long-running completion objective in the current session. create_goal may infer goal intent from a direct human request in any language; do not create a goal for routine single-turn work. Call get_goal before update_goal and copy its exact goal_id and revision. After session resume or fork, an active goal is disarmed: when a human asks to continue or resume in any wording or language, use update_goal action resume to rearm it. Mark complete only when the objective is actually achieved. Mark blocked only after the same blocking condition persists for at least 3 consecutive goal rounds, and report that concrete condition in blocked_reason; difficulty, uncertainty, or useful remaining work is not blocked.",
+  "create_description": "Create one persisted same-session completion goal when the current direct human request is a long-running objective that should continue across autonomous goal rounds. You may infer that intent without requiring the user to say \"create a goal\". Do not use this for trivial single-turn work. Execution rejects non-human and subagent authority.",
+  "get_description": "Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal.",
+  "todo_parallel": "Record and update a structured task list for the current work. Send the ENTIRE list every call — it REPLACES the previous list (there are no partial updates, no per-item edits). Use it to plan multi-step work and show progress: add one todo per concrete step before you start. Mark every todo being actively worked on `in_progress` — several at once when work genuinely runs in parallel (e.g. concurrent subagents or background commands), one for sequential work; while work remains, at least one task should be `in_progress`. Mark a todo `completed` the moment it is done (do not batch completions), and allow no `in_progress` item only once all work is complete. Skip the list for trivial single-step tasks. Statuses: `pending` (not started), `in_progress` (being worked on now), `completed` (finished).",
+  "todo_single": "Record and update a structured task list for the current work. Send the ENTIRE list every call — it REPLACES the previous list (there are no partial updates, no per-item edits). Use it to plan multi-step work and show progress: add one todo per concrete step before you start. Keep AT MOST ONE todo `in_progress` at a time; while work remains, exactly one active task should be `in_progress`. Mark a todo `completed` the moment it is done (do not batch completions), and allow no `in_progress` item only once all work is complete. Skip the list for trivial single-step tasks. Statuses: `pending` (not started), `in_progress` (being worked on now), `completed` (finished).",
+  "folds": [
+    {
+      "name": "empty",
+      "events": [],
+      "result": {
+        "roundsStarted": 0
+      }
+    },
+    {
+      "name": "create",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 1,
+          "objective": "implement and verify",
+          "phase": "active",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 0,
+        "createdAt": 100,
+        "updatedAt": 100,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "two-rounds",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 1
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 2
+            }
+          },
+          "seq": 2
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 1,
+          "objective": "implement and verify",
+          "phase": "active",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 2,
+        "createdAt": 100,
+        "updatedAt": 100,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "duplicate-round",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 1
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 2
+        }
+      ],
+      "error": "goal round at session event 2 is not the next admitted round of the active goal"
+    },
+    {
+      "name": "skipped-round",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 2
+            }
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal round at session event 1 is not the next admitted round of the active goal"
+    },
+    {
+      "name": "over-cap",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 1
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 2
+            }
+          },
+          "seq": 2
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 3
+            }
+          },
+          "seq": 3
+        }
+      ],
+      "error": "goal round at session event 3 is not the next admitted round of the active goal"
+    },
+    {
+      "name": "stale-round",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 2,
+              "round": 1
+            }
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal round at session event 1 is not the next admitted round of the active goal"
+    },
+    {
+      "name": "complete",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 1
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "complete",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "complete",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 1,
+            "createdAt": 100,
+            "updatedAt": 101
+          },
+          "seq": 2
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 2,
+          "objective": "implement and verify",
+          "phase": "complete",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 1,
+        "createdAt": 100,
+        "updatedAt": 101,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 2
+        }
+      }
+    },
+    {
+      "name": "resume-paused",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "pause",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "paused",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "resume",
+            "goal": {
+              "id": "goal-a",
+              "revision": 3,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 101
+          },
+          "seq": 2
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 3,
+              "round": 1
+            }
+          },
+          "seq": 3
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 3,
+          "objective": "implement and verify",
+          "phase": "active",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 1,
+        "createdAt": 100,
+        "updatedAt": 101,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 3
+        }
+      }
+    },
+    {
+      "name": "edit",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "edit",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "new definition",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 2,
+          "objective": "new definition",
+          "phase": "active",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 0,
+        "createdAt": 100,
+        "updatedAt": 100,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 2
+        }
+      }
+    },
+    {
+      "name": "edit-phase",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "edit",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "complete",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal edit cannot change phase or blocked reason"
+    },
+    {
+      "name": "definition-change",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "complete",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "wrong",
+              "phase": "complete",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal complete cannot change objective or maxGoalRounds"
+    },
+    {
+      "name": "counter-reset",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "user/message",
+          "data": {
+            "source": {
+              "kind": "goal",
+              "goalId": "goal-a",
+              "revision": 1,
+              "round": 1
+            }
+          },
+          "seq": 1
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "complete",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "complete",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 2
+        }
+      ],
+      "error": "goal complete does not preserve the current counters and timestamps"
+    },
+    {
+      "name": "backward-time",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "pause",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "paused",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 99
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal change updatedAt cannot precede createdAt"
+    },
+    {
+      "name": "blocked",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "block",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "blocked",
+              "maxGoalRounds": 2,
+              "blockedReason": {
+                "code": "model-reported",
+                "message": "missing SDK"
+              }
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-a",
+          "revision": 2,
+          "objective": "implement and verify",
+          "phase": "blocked",
+          "maxGoalRounds": 2,
+          "blockedReason": {
+            "code": "model-reported",
+            "message": "missing SDK"
+          }
+        },
+        "roundsStarted": 0,
+        "createdAt": 100,
+        "updatedAt": 100,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 2
+        }
+      }
+    },
+    {
+      "name": "bad-blocked-reason",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "block",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "blocked",
+              "maxGoalRounds": 2,
+              "blockedReason": {
+                "code": "INVALID",
+                "message": "bad"
+              }
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal change goal.blockedReason.code must be lower-kebab-case"
+    },
+    {
+      "name": "clear",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "clear",
+            "cleared": {
+              "id": "goal-a",
+              "revision": 2
+            },
+            "clearedAt": 101
+          },
+          "seq": 1
+        }
+      ],
+      "result": {
+        "roundsStarted": 0,
+        "lastRef": {
+          "id": "goal-a",
+          "revision": 2
+        }
+      }
+    },
+    {
+      "name": "reuse-id",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "clear",
+            "cleared": {
+              "id": "goal-a",
+              "revision": 2
+            },
+            "clearedAt": 101
+          },
+          "seq": 1
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 2
+        }
+      ],
+      "error": "goal create requires a fresh active revision-one goal with zero rounds"
+    },
+    {
+      "name": "create-while-active",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-b",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        }
+      ],
+      "error": "goal create requires a fresh active revision-one goal with zero rounds"
+    },
+    {
+      "name": "replace-completed",
+      "events": [
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-a",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 0
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "complete",
+            "goal": {
+              "id": "goal-a",
+              "revision": 2,
+              "objective": "implement and verify",
+              "phase": "complete",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 1
+        },
+        {
+          "type": "goal/change",
+          "data": {
+            "kind": "goal/change",
+            "version": 1,
+            "operation": "create",
+            "goal": {
+              "id": "goal-b",
+              "revision": 1,
+              "objective": "implement and verify",
+              "phase": "active",
+              "maxGoalRounds": 2
+            },
+            "roundsStarted": 0,
+            "createdAt": 100,
+            "updatedAt": 100
+          },
+          "seq": 2
+        }
+      ],
+      "result": {
+        "goal": {
+          "id": "goal-b",
+          "revision": 1,
+          "objective": "implement and verify",
+          "phase": "active",
+          "maxGoalRounds": 2
+        },
+        "roundsStarted": 0,
+        "createdAt": 100,
+        "updatedAt": 100,
+        "lastRef": {
+          "id": "goal-b",
+          "revision": 1
+        }
+      }
+    }
+  ]
+}

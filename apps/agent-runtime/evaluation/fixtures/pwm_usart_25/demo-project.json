@@ -1,0 +1,213 @@
+{
+  "format": 1,
+  "product": "M9P6362",
+  "spec_version": "V1.16",
+  "demo_version": "V1.07",
+  "clock_hz": 32000000,
+  "modules": [
+    {
+      "resources": [
+        "TC0",
+        "PWM0",
+        "IO:C0"
+      ],
+      "init": "Demo_Pwm0_Init",
+      "poll": null,
+      "interrupt_high": null,
+      "actual": {
+        "frequency_hz": 20000.0,
+        "duty_percent": 25.0,
+        "period_register": 199,
+        "period_counts": 200,
+        "duty_register": 50,
+        "duty_steps": 200,
+        "frequency_error_percent": 0.0,
+        "duty_error_points": 0.0,
+        "prescaler": 8,
+        "t0cr": 11,
+        "postscaler": 1
+      },
+      "adaptations": [
+        "仅初始化所选通道",
+        "保留官方C0–C3映射",
+        "移除50ms开关/延时",
+        "显式复位TC0后分频",
+        "按固定预分频换算周期与占空比并报告实际值",
+        "改为20kHz/25%：TC0CKPS=011(1:8)、TC0CL=199、PWM00D=50（40%方案已撤回，不作为当前配置）",
+        "保持官方“先配置、再开启”顺序：TC0EN=1单独写在TC0CL/PWM00CR/PWM00D之后",
+        "T0CR2=0仅保持后分频默认1:1，不假设其与PWM输出的相互作用"
+      ],
+      "id": "pwm0",
+      "name": "PWM0 输出",
+      "parameters": {
+        "frequency_hz": 20000,
+        "duty_percent": 25,
+        "channels": [
+          0
+        ]
+      },
+      "source": {
+        "archive": "M9P6362/M9P6362_Demo_V1.07.zip",
+        "url": "http://www.masses-chip.com/3090.html",
+        "download_url": "http://www.masses-chip.com/u/2026/03/M9P6362_Demo_V1.07.zip",
+        "member": "M9P6362_Demo_V1.07/M9P6362_PWM0/PWM0_Work.c"
+      },
+      "spec_sections": [
+        {
+          "section": "7.1",
+          "page": 55
+        },
+        {
+          "section": "7.2",
+          "page": 56
+        },
+        {
+          "section": "7.3",
+          "page": 57
+        },
+        {
+          "section": "7.6–7.7",
+          "page": 58
+        },
+        {
+          "section": "7.8",
+          "page": 59
+        },
+        {
+          "section": "6.9.3",
+          "page": 54
+        }
+      ],
+      "verification": {
+        "script": "agent_demo/tools/pwm0_calc.py",
+        "command": "python agent_demo/tools/pwm0_calc.py --check",
+        "level": "static/arithmetic only: no vendor compiler, no board, no scope",
+        "result": "PASS"
+      }
+    },
+    {
+      "id": "usart0",
+      "name": "USART0 异步串口",
+      "resources": [
+        "USART0",
+        "IO:A0",
+        "IO:A1"
+      ],
+      "init": "Demo_Usart0_Init",
+      "poll": "Demo_Usart0_Poll",
+      "interrupt_high": "Demo_Usart0_RxHandler",
+      "parameters": {
+        "baudrate": 115200,
+        "data_bits": 8,
+        "parity": "none",
+        "stop_bits": 1,
+        "tx_pin": "IOA0",
+        "rx_pin": "IOA1",
+        "tx_irq": false,
+        "rx_irq": true,
+        "rx_irq_priority": "high"
+      },
+      "actual": {
+        "spd_divider": 4,
+        "tx0cr": 128,
+        "brgd0h": 32,
+        "brgd0l": 68,
+        "brgd": 68,
+        "rx0cr": 128,
+        "mptx0": 0,
+        "mprx0": 1,
+        "baudrate_bps": 115942.029,
+        "baudrate_error_percent": 0.6441,
+        "baudrate_error_limit_percent": 2.0,
+        "bit_time_us": 8.625,
+        "frame_time_us": 86.25,
+        "stop1": 1,
+        "fosc_hz": 32000000
+      },
+      "adaptations": [
+        "引脚由例程的IOB3/IOB4改到IOA0/IOA1（C0已被PWM0占用），映射合法性见§6.9.1/§6.9.2 p.53",
+        "BRGD0H用'='写入0x20而非例程的'|='，显式置STOP1=1得到1个停止位(8N1)，例程未置STOP1",
+        "改为非阻塞单字节收发接口，队列满/空返回0，不阻塞主循环",
+        "移除例程的回显业务与Delay_50ms延时",
+        "发送不开TX中断，由Demo_Poll()按TX0IF推进；接收在Demo_InterruptHigh()中处理",
+        "接收按§10.8.3 p.80 STEP4→STEP6：先判FR0ER再读RX0REG，坏帧不入队",
+        "main.C新增Demo_Poll()（主循环）和Demo_InterruptHigh()（int_h）两处接出，TC1_Interrupt()仍先执行"
+      ],
+      "source": {
+        "archive": "M9P6362/M9P6362_Demo_V1.07.zip",
+        "url": "http://www.masses-chip.com/3090.html",
+        "download_url": "http://www.masses-chip.com/u/2026/03/M9P6362_Demo_V1.07.zip",
+        "member": "M9P6362_Demo_V1.07/M9P6362_Usart0/Usart0_Work.c"
+      },
+      "spec_sections": [
+        {
+          "section": "10.2",
+          "page": 74
+        },
+        {
+          "section": "10.4",
+          "page": 75
+        },
+        {
+          "section": "10.5",
+          "page": 76
+        },
+        {
+          "section": "10.6",
+          "page": 76
+        },
+        {
+          "section": "10.7",
+          "page": 76
+        },
+        {
+          "section": "10.8.1",
+          "page": 77
+        },
+        {
+          "section": "10.8.3",
+          "page": 80
+        },
+        {
+          "section": "5.5–5.7",
+          "page": 42
+        },
+        {
+          "section": "6.9.1–6.9.2",
+          "page": 53
+        }
+      ],
+      "verification": {
+        "script": "agent_demo/tools/usart0_calc.py",
+        "command": "python agent_demo/tools/usart0_calc.py --check",
+        "level": "static/arithmetic only: no vendor compiler, no board, no scope",
+        "result": "PASS"
+      }
+    }
+  ],
+  "reserved_resources": [],
+  "preserved": [
+    "M9P6362_TC1.prj (system clock 32 MHz, 8T, WDT, RST-IO, BOR 2.4V options unchanged)",
+    "TC1_Work.c (1 ms TC1 event unchanged)",
+    "main.C Project_Work business_cycles += 2; unchanged",
+    "main.C SYSTEM_INIT: OSCM = 0x00, GIEH/GIEL = 0 and the port setup unchanged",
+    "main.C int_l and GIEL left unused (no low-priority interrupt added)"
+  ],
+  "managed_files": [
+    "agent_demo/SOURCES.md",
+    "agent_demo/demo_app.c",
+    "agent_demo/demo_app.h",
+    "agent_demo/demo_platform.h",
+    "agent_demo/modules/demo_pwm0.c",
+    "agent_demo/modules/demo_pwm0.h",
+    "agent_demo/modules/demo_usart0.c",
+    "agent_demo/modules/demo_usart0.h",
+    "agent_demo/tools/pwm0_calc.py",
+    "agent_demo/tools/usart0_calc.py",
+    "agent_demo/tools/usart0_host_test.c",
+    "main.C",
+    "M9P6362_TC1.prj"
+  ],
+  "mode": "existing",
+  "project_file": "M9P6362_TC1.prj"
+}
