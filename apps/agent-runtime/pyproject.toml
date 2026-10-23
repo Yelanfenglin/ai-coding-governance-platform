@@ -7,7 +7,7 @@ name = "ai-coding-governance-agent-runtime"
 version = "0.1.0"
 description = "ReAct-style agent runtime: turn/step loop, tool execution, and session event log"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["PyYAML>=6,<7"]
 
 [project.scripts]
 agent-runtime = "app.cli:main"
@@ -25,6 +25,7 @@ include = ["app*", "evaluation*"]
 
 [tool.setuptools.package-data]
 "app.demos" = ["SKILL.md"]
+"app.skills" = ["*/SKILL.md"]
 "evaluation" = ["cases/*.json", "fixtures/**/*"]
 
 [tool.pytest.ini_options]

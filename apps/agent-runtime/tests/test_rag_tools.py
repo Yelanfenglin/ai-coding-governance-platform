@@ -108,6 +108,29 @@ async def test_search_spec_with_no_hits_says_so() -> None:
     assert "no chunks matched" in result.content
 
 
+async def test_switching_product_does_not_inherit_another_products_version() -> None:
+    transport, calls = recording_transport((200, []))
+    registry = ToolRegistry()
+    for tool in rag_tools(
+        RagClient(RagClientConfig("http://rag"), transport),
+        default_product="M9P6362", default_version="V1.16",
+    ):
+        registry.register(tool)
+    queries = [
+        {"question": "source"},
+        {"question": "target", "product": "M9F6820"},
+        {"question": "target version", "product": "M9F6820", "version": "V1.7"},
+        {"question": "source again", "product": "M9P6362"},
+    ]
+    for index, query in enumerate(queries):
+        assert not (await registry.execute(ToolCall(str(index), "search_spec", query))).is_error
+    assert calls[0]["params"]["version"] == "V1.16"
+    assert calls[1]["params"]["product"] == "M9F6820"
+    assert "version" not in calls[1]["params"]
+    assert calls[2]["params"]["version"] == "V1.7"
+    assert calls[3]["params"]["version"] == "V1.16"
+
+
 async def test_excerpt_keeps_order_and_ids_and_full_evidence_can_be_read() -> None:
     long_hit = {**HIT, "text": "寄存器说明" * 300 + "末尾关键字段=73"}
     second = {**HIT, "chunk_id": "second-chunk", "text": "第二条证据"}

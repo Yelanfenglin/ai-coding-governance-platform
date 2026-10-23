@@ -9,6 +9,11 @@ commit `cae9fd28a2d3d515c83ea495093e3768cc8efab6`. Shared nested usage reference
 OpenAI Agents SDK `Agent.as_tool` at commit `841dfdd938bfd4ca052475eb76d6245a356868e0`.
 These references do not introduce either runtime as a dependency.
 
+On-demand skill discovery references Pi's `packages/coding-agent/src/core/skills.ts`
+(`loadSkillFromFile` and `formatSkillsForPrompt`) at the same Pi commit. The local
+adapter exposes packaged instructions through `read_skill` and uses the existing
+Agent loop and tools.
+
 MIT License
 
 Copyright (c) 2026 DeepSeek

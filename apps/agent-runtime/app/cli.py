@@ -53,6 +53,7 @@ from .providers.openai_compatible import OpenAiCompatibleProvider
 from .rag_tools import RagClient, RagClientConfig, rag_tools
 from .session import JsonlSessionStore, repair_tool_pairing
 from .session_search import SessionSearch
+from .skills import load_skills, read_skill_tool, skills_prompt
 from .subagents import SubagentRunner
 from .tools import ToolRegistry
 from .workspace_tools import example_tools, workspace_prompt, workspace_tools
@@ -265,6 +266,9 @@ async def run_once(
         if args.examples_root:
             for tool in example_tools(args.examples_root):
                 registry.register(tool)
+    skills = load_skills() if selected else {}
+    if skills:
+        registry.register(read_skill_tool(skills))
 
     # Project state remains workspace-scoped. Delegation needs a parent log for
     # completed-turn fork boundaries even when --session was not supplied.
@@ -340,6 +344,8 @@ async def run_once(
         if args.delivery_dir else None
     )
     extra_prompt = workspace_prompt(selected) if workspace else ""
+    if skills:
+        extra_prompt += "\n\n" + skills_prompt(skills)
     if delivery is not None and delivery.implementation is not None:
         registry.register(delivery.implementation.tool())
     if module_project:
@@ -357,6 +363,8 @@ async def run_once(
         if args.examples_root:
             for tool in example_tools(args.examples_root):
                 child_tools.register(tool)
+        if skills:
+            child_tools.register(read_skill_tool(skills))
         if search is not None:
             child_tools.register(search_sessions_tool(search))
 
@@ -369,7 +377,8 @@ async def run_once(
                     "Return concise findings with file/line or document/chunk/page references. "
                     "State uncertainty and checks not performed; the parent integrates changes.\n"
                     "Leave a model response in the shared budget for the parent to report.\n"
-                    f"Workspace: {selected}; product: {args.product}; version: {args.version}",
+                    f"Workspace: {selected}; product: {args.product}; version: {args.version}\n"
+                    + skills_prompt(skills),
                 )],
                 memory=facts, user_profile=profile, applies_to=applies_to,
                 compaction=(None if args.no_compaction else CompactionPolicy(
@@ -410,6 +419,10 @@ async def run_once(
             "并复验。它的命令与工作目录见工具定义；不修改验收判据来获得通过。"
             "交付时宿主还会检查最终版本，模型的完成声明不能代替验收结果。"
         )
+    if skills and history and not any(skills_prompt(skills) in m.content for m in history):
+        # Old sessions retain their system prefix. Announce current skill availability
+        # after other host guidance without injecting full instructions every turn.
+        input_question += "\n\n" + skills_prompt(skills)
     messages = _continuation(history, input_question, extra_prompt)
     context_anchor = (
         await session.load_context_anchor() if session is not None and history else None

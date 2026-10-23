@@ -1,0 +1,21 @@
+{
+  "id": "chip_migration_adc",
+  "seed": "../fixtures/chip_migration_adc",
+  "question": "将 source/ 中已有的 M9P6362 V1.16 ADC 模块迁移到 target/ 的 M9F6820 V1.07 官方 TC1 工程。保留 Demo_Adc0_Init/Start/Poll/Read 的公开 C 接口、按需单次采样、非阻塞推进、忙时拒绝重启、结果未取走拒绝新请求、Read 消费一次且无结果时不修改输出的行为。目标使用 SOP16 的逻辑端口 IOB4/AD12、VDD 参考、12 位右对齐、ADC 时钟 1MHz；保持目标的 16MHz/4T、TC1 心跳与系统初始化。source/ 全部文件、target/COMMON.H、MASSESCHIP_DEFINE.H、TC1_Work.c 和目标 .prj Settings 不改。迁移模块放 target/modules/demo_adc0.c 与 .h；主程序持续推进采样，将最新值存到 volatile unsigned int app_adc_value，保留 TC1 原业务和中断分发，登记目标工程文件。用源与目标的实际规格及例程确认硬件差异，target/MIGRATION.md 记录保留的行为、硬件适配、引用定位和实际检查。用可用的独立验收修复真实问题，区分主机检查、厂商编译和板卡运行。不要修改独立验收判据。",
+  "validation_layer": "host_module_behavior",
+  "checks": [
+    {
+      "id": "shared_behavior_and_target_regression",
+      "kind": "command",
+      "timeout": 90,
+      "command": [
+        "{python}",
+        "{evaluation}/checks/adc_migration.py",
+        "--workspace",
+        "{workspace}",
+        "--out",
+        "{out}/host"
+      ]
+    }
+  ]
+}

@@ -215,11 +215,15 @@ def search_spec_tool(
         question = str(args.get("question", "")).strip()
         if not question:
             return ToolResult(content="search_spec requires 'question'", is_error=True)
+        product = str(args.get("product") or default_product or "") or None
+        version = str(args.get("version") or "") or None
+        if version is None and product == default_product:
+            version = default_version
         try:
             hits = await client.search(
                 question,
-                product=str(args.get("product") or default_product or "") or None,
-                version=str(args.get("version") or default_version or "") or None,
+                product=product,
+                version=version,
                 kind=str(args.get("kind") or "") or None,
                 top_k=int(args.get("top_k", 8)),  # type: ignore[arg-type]
             )
@@ -234,7 +238,10 @@ def search_spec_tool(
         description=(
             "Locate specification evidence for a concrete missing fact or register. Returns "
             "cited excerpts (default 900 chars per hit); use read_context for selected full chunks "
-            "instead of repeating broad searches. Citation identifiers and hit order are preserved."
+            "instead of repeating broad searches. Citation IDs and hit order are preserved. "
+            f"Default scope: product={default_product!r}, version={default_version!r}. "
+            "Overriding product does not inherit the old product's version; specify both "
+            "product and version for a version-specific cross-product comparison."
         ),
         input_schema={
             "type": "object",

@@ -22,6 +22,7 @@ CLI 读取进程环境变量，Web 可通过 `--env-file` 加载 `.env`：
 ## 工具与任务
 
 - 通用工程工具：`list_files`、`read_file`、`write_file`、`edit_file`、`run_command`。
+- 按需 Skill：普通工作区提供技能摘要，模型通过 `read_skill` 加载匹配的指导。目前包括芯片改型迁移；继续复用通用工具，由模型按工程情况决定步骤。
 - 规格检索：`search_spec` 返回定位摘要，`read_context` 展开完整上下文；引用保留文档、片段、型号、版本、页码和章节。
 - 模块工具：通过 `--demo-project` 或 `--firmware-project` 接入例程目录与模块生成；通用工作区仍可编辑和接入其他模块。
 - 记忆工具：保存、替换、失效已确认事实，并检索历史会话；项目事实与用户画像分别存储。

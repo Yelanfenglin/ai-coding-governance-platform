@@ -59,6 +59,16 @@ $verificationPath = Join-Path $demoRun 'verification.json'
 
 ## 交付评分与离线重评
 
+芯片迁移用例在 `evaluation/cases/chip_migration_adc.json`。复制
+`evaluation/fixtures/chip_migration_adc` 为独立工作区，保留 `source/` 与 `target/`
+结构；沿用上面的宿主验收配置，将 `casePath` 指向这个用例，再以普通
+`--workspace` 模式运行用例的 `question`。工作区提供迁移 Skill 的摘要与读取工具，
+由模型按需加载，使用现有文件、规格检索和命令工具完成适配。
+
+该用例将 M9P6362 的单次非阻塞 ADC 模块迁入 M9F6820 TC1 工程。同一份 C 行为检查
+分别编译并执行源与目标模块；目标另外验证工程登记、系统配置及原有 TC1 中断和心跳。
+这是主机侧模块验收，厂商编译和板卡运行分别记录。
+
 `evaluation.runner` 复用冻结 case 与独立行为检查，不调用模型：
 
 ```powershell

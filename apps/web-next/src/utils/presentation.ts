@@ -99,6 +99,7 @@ const labels: Record<string, [string, string]> = {
   run_command: ["运行命令", "terminal"],
   search_spec: ["检索规格书", "search"],
   read_context: ["展开规格依据", "book"],
+  read_skill: ["读取开发技能", "book"],
   verify_project: ["检查工程", "check"],
   record_implementation: ["记录实现依据", "book"],
   check_project_manifest: ["核对工程清单", "check"],
