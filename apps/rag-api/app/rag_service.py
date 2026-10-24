@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from opentelemetry import trace
+
 from .answer_checks import check_answer
 from .checks.runtime import to_query_checks
 from .evidence_checks import (
@@ -26,6 +28,8 @@ from .evidence_checks import (
 from .filter_translator import translate_filters
 from .generation.citations import build_citation
 from .generation.context import ContextBuilder
+from .observability import metrics
+from .observability.otel import observe, observed
 from .observability.trace import QueryTrace, TraceSink
 from .planning import should_use_planner
 from .query_filters import FilterCondition
@@ -247,8 +251,21 @@ class RagQueryService:
             raise RagValidationError(f"top_k must be between 1 and {self.max_top_k}")
 
     async def search(self, request: SearchParams) -> list[SearchHit]:
-        self._validate_top_k(request.top_k)
-        return await self._retrieve(request)
+        with observe("rag.search", "RETRIEVER", **{
+            "rag.top_k": request.top_k, "rag.product": request.product or "",
+            "rag.version": request.version or "",
+        }) as span:
+            self._validate_top_k(request.top_k)
+            hits = await self._retrieve(request)
+            metrics.HITS.observe(len(hits))
+            if getattr(self, "_bm25_degraded", False):
+                metrics.DEGRADED.labels("bm25").inc()
+            span.set_attributes({"rag.hit_count": len(hits),
+                                 "rag.bm25_degraded": bool(getattr(self, "_bm25_degraded", False))})
+            for index, hit in enumerate(hits):
+                span.set_attribute(f"retrieval.documents.{index}.document.id", str(hit.chunk_id))
+                span.set_attribute(f"rag.documents.{index}.document_id", str(hit.document_id))
+            return hits
 
     @property
     def _retrieval_pipeline(self) -> RetrievalPipeline:
@@ -577,7 +594,13 @@ class RagQueryService:
         ):
             raise RagUnavailableError("embedding fingerprint does not match the index")
 
+    @observed("rag.embed", "EMBEDDING")
     async def _embed_question(self, question: str) -> list[float]:
+        span = trace.get_current_span()
+        span.set_attribute("embedding.model_name", str(_setting(
+            self._settings, "embedding_model",
+            _get(self._embedding_provider, "model_id", default=""),
+        )))
         try:
             vectors = await self._embedding_provider.embed([question])
         except Exception as exc:
@@ -599,8 +622,10 @@ class RagQueryService:
         )
         if len(vector) != expected_dimension or not all(math.isfinite(value) for value in vector):
             raise RagUnavailableError("embedding provider returned an invalid vector")
+        span.set_attribute("embedding.dimension", expected_dimension)
         return vector
 
+    @observed("rag.query")
     async def query(self, request: QueryRequest) -> QueryResponse:
         trace_enabled = bool(_setting(self._settings, "query_trace_enabled", False))
         trace = QueryTrace() if trace_enabled else None
@@ -779,10 +804,13 @@ class RagQueryService:
             return self._retrieval_only_response(started, citations, degraded_reasons, checks)
 
         try:
-            generation = await self._llm_provider.generate(effective_request.question, contexts)
-            answer = self._generation_text(generation)
-            if not answer:
-                raise ValueError("empty generation")
+            with observe("rag.generate", "LLM", **{
+                "llm.model_name": str(_get(self._llm_provider, "model_id", default="configured")),
+            }):
+                generation = await self._llm_provider.generate(effective_request.question, contexts)
+                answer = self._generation_text(generation)
+                if not answer:
+                    raise ValueError("empty generation")
         except Exception as exc:
             self._trace_record(
                 trace,
@@ -796,6 +824,7 @@ class RagQueryService:
             if failure_mode not in {"retrieval_only", "degraded"}:
                 raise GenerationUnavailableError("generation provider is unavailable") from exc
             degraded_reasons.append("generation_unavailable")
+            metrics.DEGRADED.labels("generation").inc()
             checks_started = self._trace_start(trace)
             checks = self._query_checks(citations, "")
             self._trace_record(
@@ -971,6 +1000,7 @@ class RagQueryService:
             checks=checks,
         )
 
+    @observed("rag.context", "RETRIEVER")
     async def context(self, document_id: UUID, chunk_id: UUID) -> ChunkContext:
         async with self._repo_scope() as repo:
             canonical = await repo.get_context(document_id, chunk_id)

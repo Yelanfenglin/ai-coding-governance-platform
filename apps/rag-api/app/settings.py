@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     """RAG service settings loaded from ``RAG_`` environment variables."""
 
     model_config = SettingsConfigDict(env_prefix="RAG_", env_file=".env", extra="ignore")
+
+    otel_endpoint: str | None = Field(
+        default=None, validation_alias="OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    )
+    monitoring_log_path: Path | None = Field(default=None, validation_alias="MONITORING_LOG_PATH")
 
     database_url: SecretStr
 

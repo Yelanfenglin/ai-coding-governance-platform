@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from collections.abc import Mapping
 from typing import Annotated, Any
 
@@ -63,9 +64,15 @@ class HealthChecker:
         self._settings = settings
 
     async def check(self) -> HealthResponse:
+        from ..observability import metrics
+
         postgres = await self._postgres_health()
         milvus = await self._milvus_health()
         providers = self._provider_health()
+        for name, result in {"postgres": postgres, "milvus": milvus, **providers}.items():
+            if name not in providers or result.configured:
+                metrics.DEPENDENCY.labels(name).set(int(result.ok))
+        metrics.HEALTH_CHECKED.set(time.time())
         ready = postgres.ok and milvus.ok and all(
             health.ok for health in providers.values() if health.configured
         )

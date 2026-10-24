@@ -15,10 +15,15 @@ import asyncio
 import json
 import os
 import sys
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
+from . import metrics
+from .circuit import CircuitBreakers, model_dependency
+from .circuit import from_env as circuit_from_env
 from .compaction import CompactionPolicy, ModelSummarizer, leading_system_count
 from .contracts import (
     AssistantTextDelta,
@@ -47,10 +52,12 @@ from .inbox import Inbox
 from .loop import RunOptions, run_agent, system_message, user_message
 from .memory import DEFAULT_MEMORY_CHARS, DEFAULT_USER_CHARS, JsonMemoryStore
 from .memory_tools import memory_tools, search_sessions_tool
+from .observability import configure, current_trace_id, failure, observe, record_event
 from .project_verification import ProjectVerification
 from .prompts import react_system_prompt
 from .providers.openai_compatible import OpenAiCompatibleProvider
 from .rag_tools import RagClient, RagClientConfig, rag_tools
+from .retry import RetryPolicy
 from .session import JsonlSessionStore, repair_tool_pairing
 from .session_search import SessionSearch
 from .skills import load_skills, read_skill_tool, skills_prompt
@@ -218,7 +225,65 @@ async def run_once(
     result_sink: Callable[[dict, int], None] | None = None,
     cancel_event: asyncio.Event | None = None,
     console: bool = True,
+    task_id: str | None = None,
+    conversation_id: str | None = None,
+    breakers: CircuitBreakers | None = None,
 ) -> int:
+    # 熔断注册表：Web 传入进程级实例（跨任务共享），CLI 每次新建（一个任务一个进程）。
+    breakers = breakers if breakers is not None else circuit_from_env()
+    attributes = {"agent.task.id": task_id or str(uuid4()), "agent.model": args.model}
+    if conversation_id:
+        attributes["session.id"] = conversation_id
+    with observe("agent.task", "AGENT", **attributes) as span:
+        status = None
+        verification_status = "unverified"
+        started = time.perf_counter()
+        metrics.ACTIVE_TASKS.inc()
+        metrics.TASK_STARTED.set(time.time())
+        metrics.LAST_EVENT.set(time.time())
+
+        def receive(response: dict, code: int) -> None:
+            nonlocal status, verification_status
+            status = response["status"]
+            verification_status = response["verification"]["status"]
+            span.set_attribute("agent.status", status)
+            span.set_attribute("verification.status", response["verification"]["status"])
+            if result_sink is not None:
+                result_sink(response, code)
+
+        code = EXIT_FAILED
+        try:
+            code = await _run_once(args, event_sink=event_sink, result_sink=receive,
+                                   cancel_event=cancel_event, console=console,
+                                   breakers=breakers)
+            span.set_attribute("agent.exit_code", code)
+            if code not in (EXIT_OK, EXIT_BUDGET) and status != "aborted":
+                failure(span, f"exit_{code}")
+            return code
+        except asyncio.CancelledError:
+            status = "aborted"
+            raise
+        finally:
+            seconds = time.perf_counter() - started
+            metrics.ACTIVE_TASKS.dec()
+            metrics.TASK_STARTED.set(0)
+            metrics.TASK_SECONDS.observe(seconds)
+            metrics.TASKS.labels(status or "error", verification_status).inc()
+            metrics.log("task.finished", task_id=attributes["agent.task.id"],
+                        model=args.model, status=status or "error",
+                        verification=verification_status,
+                        exit_code=code, seconds=seconds)
+
+
+async def _run_once(
+    args: argparse.Namespace, *,
+    event_sink: Callable[[object], None] | None = None,
+    result_sink: Callable[[dict, int], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
+    console: bool = True,
+    breakers: CircuitBreakers | None = None,
+) -> int:
+    dependency = model_dependency(args.base_url, args.model)
     if not args.question:
         print("a question is required", file=sys.stderr)
         return EXIT_FAILED
@@ -248,7 +313,10 @@ async def run_once(
         )
 
     provider = make_provider()
-    client = RagClient(RagClientConfig(base_url=args.rag_url, api_key=args.rag_key or None))
+    client = RagClient(
+        RagClientConfig(base_url=args.rag_url, api_key=args.rag_key or None),
+        breakers=breakers,
+    )
 
     registry = ToolRegistry()
     for tool in rag_tools(client, default_product=args.product, default_version=args.version):
@@ -372,6 +440,8 @@ async def run_once(
             child_provider = make_provider()
             return RunOptions(
                 provider=child_provider, tools=child_tools,
+                retry_policy=RetryPolicy(),
+                circuit=breakers, circuit_dependency=dependency,
                 messages=[system_message(
                     "You are a research/review subagent. Use the supplied read-only tools. "
                     "Return concise findings with file/line or document/chunk/page references. "
@@ -438,6 +508,7 @@ async def run_once(
 
     def on_event(event: object) -> None:
         nonlocal memory_recalled
+        record_event(event)
         if delivery is not None:
             delivery.observe(event)
         if event_sink is not None:
@@ -470,6 +541,8 @@ async def run_once(
     try:
         result = await run_agent(RunOptions(
             provider=provider,
+            retry_policy=RetryPolicy(),
+            circuit=breakers, circuit_dependency=dependency,
             tools=registry,
             messages=messages,
             session=session,
@@ -543,6 +616,9 @@ async def run_once(
             "input_tokens": result.usage.input_tokens,
             "output_tokens": result.usage.output_tokens,
             "total_tokens": result.usage.total_tokens,
+            **{name: getattr(result.usage, name) for name in (
+                "cached_input_tokens", "uncached_input_tokens", "reasoning_tokens",
+            ) if getattr(result.usage, name) is not None},
         },
         "tool_calls": started, "answer": _final_answer(turn_messages),
         "memory_recalled": memory_recalled, "goal": goals.get(), "todos": goal_driver.todos,
@@ -550,6 +626,8 @@ async def run_once(
         "resumed_messages": len(history), "manifest": manifest, "error": result.error,
         "verification": acceptance,
     }
+    if identifier := current_trace_id():
+        response["trace_id"] = identifier
     if subagents is not None:
         response["subagents"] = subagents.records
         response["total_steps"] = result.total_steps
@@ -588,7 +666,13 @@ async def run_once(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return asyncio.run(run_once(args))
+    metrics.configure_logging(os.getenv("MONITORING_LOG_PATH"))
+    telemetry = configure()
+    try:
+        return asyncio.run(run_once(args))
+    finally:
+        if telemetry is not None:
+            telemetry.shutdown()
 
 
 if __name__ == "__main__":

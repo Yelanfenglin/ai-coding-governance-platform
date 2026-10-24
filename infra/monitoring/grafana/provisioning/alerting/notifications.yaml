@@ -1,0 +1,27 @@
+apiVersion: 1
+contactPoints:
+- orgId: 1
+  name: dashboard-only
+  receivers:
+  - uid: local-disabled-email
+    type: email
+    disableResolveMessage: true
+    settings:
+      addresses: disabled@localhost
+muteTimes:
+- orgId: 1
+  name: dashboard-only
+  time_intervals:
+  - times:
+    - start_time: 00:00
+      end_time: '24:00'
+policies:
+- orgId: 1
+  receiver: dashboard-only
+  group_by:
+  - grafana_folder
+  - alertname
+  routes:
+  - receiver: dashboard-only
+    mute_time_intervals:
+    - dashboard-only

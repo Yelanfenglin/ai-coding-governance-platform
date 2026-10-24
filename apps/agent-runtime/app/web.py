@@ -22,9 +22,13 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import REGISTRY, CollectorRegistry
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import cli
+from . import cli, metrics
+from .circuit import from_env as circuit_from_env
+from .observability import configure
 
 API_PREFIX = "/api/agent"
 ACTIVE = {"pending", "running", "cancelling"}
@@ -63,7 +67,8 @@ class WebTask:
         _write_json(self.directory / "task.json", self.record)
 
     def publish(self, kind: str, payload: dict) -> None:
-        event = {"sequence": len(self.events) + 1, "type": kind, "payload": payload}
+        event = {"sequence": len(self.events) + 1, "type": kind, "payload": payload,
+                 "observed_at": datetime.now(UTC).isoformat()}
         self.directory.mkdir(parents=True, exist_ok=True)
         with (self.directory / "events.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -74,6 +79,9 @@ class WebTask:
 class LocalAgent:
     def __init__(self, options: argparse.Namespace) -> None:
         self.options = options
+        # 单进程单事件循环：这一个注册表就是 Web 侧的“跨任务共享”。
+        # CLI 每次 run_once 自己建一个（一个任务一个进程），所以只有 Web 有跨任务保护。
+        self.breakers = circuit_from_env()
         workspace = options.workspace or options.demo_project or options.firmware_project
         if not workspace:
             raise ValueError("agent-web requires --workspace, --demo-project or --firmware-project")
@@ -119,12 +127,14 @@ class LocalAgent:
         return self.jobs[str(identifier)]
 
     def finish(self, job: WebTask, status: str, response: dict, code: int) -> None:
-        job.record.update(status=status, response=response, exit_code=code)
+        job.record.update(status=status, response=response, exit_code=code,
+                          finished_at=datetime.now(UTC).isoformat())
         job.save()
         job.publish("TaskFinished", {"status": status, "response": response, "exit_code": code})
 
     async def execute(self, job: WebTask) -> None:
         job.record["status"] = "running"
+        job.record["started_at"] = datetime.now(UTC).isoformat()
         job.save()
         job.publish("TaskStarted", {"prompt": job.record["prompt"]})
         options = copy.copy(self.options)
@@ -143,6 +153,8 @@ class LocalAgent:
             code = await cli.run_once(
                 options, event_sink=lambda event: job.publish(type(event).__name__, asdict(event)),
                 result_sink=receive, cancel_event=job.cancelled, console=False,
+                task_id=job.record["id"], conversation_id=job.record["conversation_id"],
+                breakers=self.breakers,
             )
             status = ("cancelled" if response.get("status") == "aborted" else
                       "budget_exceeded" if response.get("status") == "budget_exceeded" else
@@ -164,12 +176,26 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        if agent.active is not None:
-            agent.active.cancelled.set()
-            await agent.active.runner
+        metrics.configure_logging(os.getenv("MONITORING_LOG_PATH"))
+        telemetry = configure()
+        try:
+            yield
+        finally:
+            if agent.active is not None:
+                agent.active.cancelled.set()
+                await agent.active.runner
+            if telemetry is not None:
+                await asyncio.to_thread(telemetry.shutdown)
 
-    app = FastAPI(title="Local Embedded Agent", lifespan=lifespan)
+    # Native FastAPI tracing otherwise exports every UI poll and parents a
+    # background task under its already-finished POST request.
+    app = FastAPI(title="Local Embedded Agent", lifespan=lifespan, telemetry={"tracing": False})
+    http_registry = CollectorRegistry()
+    http_registry.register(REGISTRY)
+    Instrumentator(excluded_handlers=["/metrics", ".*/health"],
+                   registry=http_registry).instrument(app).expose(
+                       app, include_in_schema=False,
+                   )
     app.state.agent = agent
 
     @app.middleware("http")
@@ -177,12 +203,28 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
         # A drive-by website must not command a privileged localhost Agent.
         host = request.headers.get("host", "")
         origin = request.headers.get("origin")
-        if (urlsplit(f"http://{host}").hostname not in {"127.0.0.1", "localhost", "::1"}
+        hostname = urlsplit(f"http://{host}").hostname
+        # Docker's Prometheus uses this host name. The exception exposes only
+        # aggregate GET metrics, never the task/file APIs or browser cross-origin access.
+        scrape = (request.method == "GET" and request.url.path == "/metrics"
+                  and hostname == "host.docker.internal" and origin is None)
+        if ((hostname not in {"127.0.0.1", "localhost", "::1"} and not scrape)
                 or (origin and urlsplit(origin).netloc != host)):
             return JSONResponse({"detail": "只接受本机同源访问"}, status_code=403)
         return await call_next(request)
 
     api = APIRouter(prefix=API_PREFIX)
+
+    @api.get("/health")
+    async def health():
+        job = agent.active
+        return {"ready": True, "service": "embedded-agent", "active_task": (
+            {"id": job.record["id"], "status": job.record["status"],
+             "started_at": job.record.get("started_at"),
+             "last_event_at": job.events[-1].get("observed_at") if job.events else None,
+             "last_event_type": job.events[-1]["type"] if job.events else None}
+            if job is not None else None
+        )}
 
     @api.get("/projects")
     async def projects():

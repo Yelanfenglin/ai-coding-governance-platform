@@ -1,0 +1,478 @@
+{
+  "uid": "embedded-rag",
+  "title": "嵌入式助手 · RAG 与入库",
+  "description": "检索空结果、服务错误、降级与入库积压分别记录。",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": [
+    "embedded-assistant",
+    "operations"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "title": "运行说明",
+      "options": {
+        "mode": "markdown",
+        "content": "**RETRIEVAL & INGESTION**　检索阶段 / 依赖 / 后台处理\n\n零命中是正常返回的一种情况，单独计算，不算服务 5xx。健康检查不调用付费模型。采集和看板刷新也不主动发起 embedding。"
+      }
+    },
+    {
+      "id": 2,
+      "title": "RAG 各阶段 P95",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(.95,sum by(le,operation)(rate(rag_operation_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{operation}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "操作请求与结果",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 3,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(operation,outcome)(rate(rag_operations_total[$__rate_interval]))",
+          "legendFormat": "{{operation}} / {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "检索返回数量",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(rag_search_hits_sum[$__rate_interval])/rate(rag_search_hits_count[$__rate_interval])",
+          "legendFormat": "平均",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "零命中比例",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(rag_search_hits_bucket{le=\"0.0\"}[$__rate_interval])/rate(rag_search_hits_count[$__rate_interval])",
+          "legendFormat": "零命中比例",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "依赖健康",
+      "type": "state-timeline",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rag_dependency_ready",
+          "legendFormat": "{{dependency}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "检索降级",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(rag_degradations_total[$__range])",
+          "legendFormat": "{{stage}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "入库队列",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rag_ingest_queued",
+          "legendFormat": "等待",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "rag_ingest_active",
+          "legendFormat": "处理中",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "rag_ingest_workers",
+          "legendFormat": "worker 存活",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "入库完成与失败",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "metrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(rag_ingest_jobs_total[$__range])",
+          "legendFormat": "{{outcome}} / {{stage}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "metrics"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采样",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "运行记录 · 可展开 trace_id 定位 Phoenix",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"embedded-operations\",service=\"spec-rag\"}"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    }
+  ],
+  "links": [
+    {
+      "title": "系统总览",
+      "url": "/d/embedded-overview"
+    },
+    {
+      "title": "服务与资源",
+      "url": "/d/embedded-services"
+    },
+    {
+      "title": "任务与模型",
+      "url": "/d/embedded-tasks"
+    },
+    {
+      "title": "RAG 与入库",
+      "url": "/d/embedded-rag"
+    },
+    {
+      "title": "Phoenix 任务追踪",
+      "url": "http://127.0.0.1:6006",
+      "targetBlank": true
+    },
+    {
+      "title": "告警",
+      "url": "/alerting/list"
+    }
+  ]
+}

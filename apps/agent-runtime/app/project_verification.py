@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .delivery import file_hashes, project_files, revision
+from .observability import failure, observe
 from .tools import FunctionTool, validate_arguments
 from .workspace_tools import execute_command, result, schema
 
@@ -46,6 +47,14 @@ class ProjectVerification:
         return revision(file_hashes(project_files(self.workspace, exclude=self.exclude)))
 
     async def run(self, *, phase: str) -> dict:
+        with observe("project.verify", **{"verification.phase": phase}) as span:
+            row = await self._run(phase=phase)
+            span.set_attribute("verification.passed", row["passed"])
+            if not row["passed"]:
+                failure(span, "verification_failed")
+            return row
+
+    async def _run(self, *, phase: str) -> dict:
         before = self.current_revision()
         try:
             outcome = await execute_command(self.cwd, {

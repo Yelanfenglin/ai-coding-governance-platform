@@ -9,13 +9,18 @@ HTTP 状态码与异常一律转成 `app.errors.ProviderError`，code 沿用 DSH
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from opentelemetry import trace
+
+from .. import metrics, observability
 from ..contracts import (
     BlockEnd,
     BlockStart,
@@ -40,9 +45,11 @@ from ..contracts import (
 from ..errors import (
     ErrorCode,
     ProviderError,
+    has_code,
     http_error_code,
     retry_after_seconds,
 )
+from ..observability import failure, record_usage
 
 
 class TransportError(ProviderError):
@@ -92,16 +99,82 @@ class OpenAiCompatibleProvider:
         # transport 延迟解析：httpx 是 optional 依赖，只有真正发起请求时才需要它。
         self._stream_transport = stream_transport
 
-    def generate_stream(self, request: ModelRequest) -> AsyncIterator[StreamChunk]:
-        chunks = self._resolve_stream_transport()(
-            TransportRequest(
-                url=self._url(),
-                headers=self._headers(),
+    async def generate_stream(self, request: ModelRequest) -> AsyncIterator[StreamChunk]:
+        # A stream is resumed/closed by different __anext__ tasks. Never keep an
+        # attached context across yield (OpenHands RootSpan/use_span pattern).
+        attributes = {
+            "openinference.span.kind": "LLM", "llm.model_name": self.model,
+            "gen_ai.request.model": self.model,
+            "llm.invocation_parameters": json.dumps({
+                "thinking": self.thinking, "reasoning_effort": self.reasoning_effort,
+            }),
+            "agent.request.purpose": request.purpose or "response",
+        }
+        span = observability.tracer.start_span("llm.request", attributes=attributes)
+        measurement = metrics.ModelMeasurement(self.model, request.purpose or "response")
+        started = time.perf_counter()
+        first_chunk = True
+        first_text = True
+        finished = False
+        translated = None
+        try:
+            chunks = self._resolve_stream_transport()(TransportRequest(
+                url=self._url(), headers=self._headers(),
                 body=json.dumps(self._body(request), ensure_ascii=False),
                 cancelled=request.cancelled,
-            )
-        )
-        return chunks_from_sse(chunks, cancelled=request.cancelled)
+            ))
+            translated = chunks_from_sse(chunks, cancelled=request.cancelled)
+            while True:
+                with trace.use_span(span, end_on_exit=False, record_exception=False,
+                                    set_status_on_exception=False):
+                    try:
+                        chunk = await anext(translated)
+                    except StopAsyncIteration:
+                        break
+                if first_chunk:
+                    metrics.FIRST_EVENT.labels(self.model).observe(time.perf_counter() - started)
+                    span.set_attribute("llm.first_chunk_ms", (time.perf_counter() - started) * 1000)
+                    first_chunk = False
+                if first_text and isinstance(chunk, TextDelta):
+                    metrics.FIRST_TEXT.labels(self.model).observe(time.perf_counter() - started)
+                    span.set_attribute("llm.first_text_ms", (time.perf_counter() - started) * 1000)
+                    first_text = False
+                if isinstance(chunk, UsageChunk):
+                    record_usage(span, chunk.usage)
+                    measurement.usage = chunk.usage
+                elif isinstance(chunk, StreamFinished):
+                    finished = True
+                    measurement.outcome = "ok"
+                    span.set_attribute("gen_ai.response.finish_reasons", [chunk.reason.kind])
+                    if chunk.reason.kind == "aborted":
+                        measurement.outcome = "cancelled"
+                        span.set_attribute("agent.outcome", "cancelled")
+                    elif chunk.reason.failure is not None:
+                        measurement.outcome = "error"
+                        measurement.code = chunk.reason.failure.code or chunk.reason.kind
+                        failure(span, chunk.reason.failure.code or chunk.reason.kind)
+                yield chunk
+        except asyncio.CancelledError:
+            measurement.outcome = "cancelled"
+            raise
+        except Exception as exc:
+            if has_code(exc, ErrorCode.ABORTED):
+                measurement.outcome = "cancelled"
+                span.set_attribute("agent.outcome", "cancelled")
+            else:
+                measurement.outcome = "error"
+                measurement.code = str(getattr(exc, "code", type(exc).__name__))
+                failure(span, str(getattr(exc, "code", type(exc).__name__)))
+            raise
+        finally:
+            if translated is not None:
+                await _aclose_stream(translated)
+            if not finished:
+                span.set_attribute("agent.outcome", "interrupted")
+            with trace.use_span(span, end_on_exit=False, record_exception=False,
+                                set_status_on_exception=False):
+                measurement.finish()
+            span.end()
 
     def _resolve_stream_transport(self) -> StreamTransport:
         if self._stream_transport is None:
@@ -221,6 +294,11 @@ class _SseTranslator:
     def consume(self, payload: dict[str, Any]) -> list[StreamChunk]:
         """完整处理一个 SSE payload。同一块里可能同时有 delta 与 finish_reason。"""
         chunks: list[StreamChunk] = []
+        span = trace.get_current_span()
+        if isinstance(payload.get("model"), str):
+            span.set_attribute("gen_ai.response.model", payload["model"])
+        if isinstance(payload.get("id"), str):
+            span.set_attribute("gen_ai.response.id", payload["id"])
 
         # usage 可能挂在 finish 块上，也可能是末尾独立的 usage-only 块，保留最新。
         usage = payload.get("usage")
@@ -458,10 +536,19 @@ def _parse_usage(raw: Any) -> Usage | None:
     input_tokens = int(raw.get("prompt_tokens") or 0)
     output_tokens = int(raw.get("completion_tokens") or 0)
     total = raw.get("total_tokens")
+    prompt_details = raw.get("prompt_tokens_details") or {}
+    completion_details = raw.get("completion_tokens_details") or {}
+    cached = raw.get("prompt_cache_hit_tokens", prompt_details.get("cached_tokens"))
+    missed = raw.get("prompt_cache_miss_tokens")
+    reasoning = completion_details.get("reasoning_tokens")
     return Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=int(total) if total is not None else input_tokens + output_tokens,
+        cached_input_tokens=int(cached) if cached is not None else None,
+        uncached_input_tokens=(int(missed) if missed is not None else
+                               input_tokens - int(cached) if cached is not None else None),
+        reasoning_tokens=int(reasoning) if reasoning is not None else None,
     )
 
 

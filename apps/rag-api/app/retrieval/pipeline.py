@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from ..observability.otel import observe, observed
 from ..query_filters import FilterCondition
 from ..schemas import KnowledgeChunkKind, QueryRequest, SearchHit, SearchParams
 from .bm25 import BM25Index, fuse_with_quota
@@ -144,10 +145,11 @@ class RetrievalPipeline:
         self._validate_top_k(request.top_k)
         self._bm25_degraded = False
 
-        async with self._repo_scope() as repo:
-            documents = await repo.resolve_search_documents(
-                SearchScope(product=request.product, version=request.version)
-            )
+        with observe("rag.resolve_documents"):
+            async with self._repo_scope() as repo:
+                documents = await repo.resolve_search_documents(
+                    SearchScope(product=request.product, version=request.version)
+                )
 
         if not documents:
             return []
@@ -174,12 +176,14 @@ class RetrievalPipeline:
 
         pushed = tuple(filters) if self._store_accepts_filters() else ()
         try:
-            if pushed:
-                vector_hits = await self._store.search(
-                    vector, vector_scope, request.top_k, filters=pushed
-                )
-            else:
-                vector_hits = await self._store.search(vector, vector_scope, request.top_k)
+            with observe("rag.vector_search", "RETRIEVER") as span:
+                if pushed:
+                    vector_hits = await self._store.search(
+                        vector, vector_scope, request.top_k, filters=pushed
+                    )
+                else:
+                    vector_hits = await self._store.search(vector, vector_scope, request.top_k)
+                span.set_attribute("rag.vector_hit_count", len(vector_hits))
         except RagServiceError:
             raise
         except Exception as exc:
@@ -195,8 +199,9 @@ class RetrievalPipeline:
         if not embedding_ids:
             return []
 
-        async with self._repo_scope() as repo:
-            canonical = await repo.get_chunks_by_embedding_ids(embedding_ids)
+        with observe("rag.canonical_chunks"):
+            async with self._repo_scope() as repo:
+                canonical = await repo.get_chunks_by_embedding_ids(embedding_ids)
         chunks_by_embedding = self._canonical_mapping(canonical)
 
         ranked: list[SearchHit] = []
@@ -221,6 +226,7 @@ class RetrievalPipeline:
             self._bm25_degraded = True
             return ranked
 
+    @observed("rag.bm25_fusion", "RETRIEVER")
     async def fuse_bm25(
         self,
         request: SearchParams | QueryRequest,

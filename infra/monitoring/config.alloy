@@ -1,0 +1,29 @@
+local.file_match "operations" {
+  path_targets = [{"__path__" = "/var/log/embedded/*.jsonl", "job" = "embedded-operations"}]
+  sync_period = "5s"
+}
+
+loki.source.file "operations" {
+  targets    = local.file_match.operations.targets
+  forward_to = [loki.process.operations.receiver]
+}
+
+loki.process "operations" {
+  stage.json {
+    expressions = {service = "service", event = "event", timestamp = "timestamp"}
+  }
+  stage.labels {
+    values = {service = "", event = ""}
+  }
+  stage.timestamp {
+    source = "timestamp"
+    format = "Unix"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

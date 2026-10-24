@@ -22,7 +22,9 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
+from . import metrics
 from .assembler import BlockAssembler
+from .circuit import CircuitBreakers, CircuitOpen, Outcome, Permit, provider_outcome
 from .compaction import (
     CompactionPolicy,
     ContextMeter,
@@ -77,11 +79,13 @@ from .contracts import (
     TurnStartEntry,
     Usage,
 )
-from .errors import ErrorCode, ProviderError, as_provider_error
+from .errors import ErrorCode, ProviderError, as_provider_error, has_code
 from .goal_driver import TOOL_INITIATOR, GoalRoundDriver
 from .goal_prompts import goal_guidance
 from .inbox import Inbox
 from .memory import JsonMemoryStore
+from .observability import failure as record_failure
+from .observability import observe
 from .retry import RetryPolicy
 
 ABORTED_BEFORE_DISPATCH = "Error: tool call aborted before dispatch"
@@ -123,6 +127,10 @@ class RunOptions:
     session: SessionSink | None = None
     #: 模型请求重试策略；None 表示不重试。
     retry_policy: RetryPolicy | None = None
+    #: 依赖级熔断注册表（进程内按依赖键共享）；None 表示不启用。
+    circuit: CircuitBreakers | None = None
+    #: 本 provider 的依赖键（`model:{base_url}|{model}`）；熔断启用时必填。
+    circuit_dependency: str | None = None
     #: 并行工具池上限（DSH `maxParallelToolCalls`）。
     max_parallel_tool_calls: int = 10
     #: 运行中插话/追问的输入队列；None 表示不启用 steering。
@@ -164,15 +172,19 @@ class _StepOutcome:
 
 
 async def run_agent(options: RunOptions) -> AgentRunResult:
-    owns_control = options.run_control is None
-    control = options.run_control or RunControl(budget=options.budget, started_at=time.monotonic())
-    options = replace(options, inbox=options.inbox or Inbox(), run_control=control,
-                      budget=control.budget)
-    result = await _run_with_driver(options)
-    result.total_steps = control.steps
-    if owns_control:
-        result.usage = control.usage
-    return result
+    with observe("agent.run", "AGENT") as span:
+        owns_control = options.run_control is None
+        control = options.run_control or RunControl(
+            budget=options.budget, started_at=time.monotonic(),
+        )
+        options = replace(options, inbox=options.inbox or Inbox(), run_control=control,
+                          budget=control.budget)
+        result = await _run_with_driver(options)
+        result.total_steps = control.steps
+        if owns_control:
+            result.usage = control.usage
+        span.set_attributes({"agent.status": result.status, "agent.steps": result.steps})
+        return result
 
 
 async def _run_with_driver(options: RunOptions) -> AgentRunResult:
@@ -639,40 +651,151 @@ async def _request_with_retry(
 
     重试计数是 step 内的局部变量，每个 step 重新开始 —— 与 DSH 的 retry projection
     在 `step/start` 时清空一致。
+
+    熔断在**每个物理请求发出之前**检查（首次 attempt 也检查），被拒绝时不发网络调用。
+    因此阈值同时也是单次重试序列内的截断点：默认阈值等于重试预算的物理请求数，
+    单条全新的请求不会被截断；若熔断已有存量失败（别的任务/子 Agent 攒下的），
+    这条请求可能第一次失败就撞上 open。
     """
+    ledger = _RetryLedger(options)
+    try:
+        answer = await _request_attempts(options, messages, turn, step, request, ledger)
+    except BaseException as exc:
+        ledger.finish(exc)
+        raise
+    # `None` 表示取消（可见前缀已提交，见 `_request_assistant_turn`）：
+    # 它不抛异常，所以不能把“没有异常”当成 recovered。
+    ledger.finish(None, cancelled=answer is None)
+    return answer
+
+
+async def _request_attempts(
+    options: RunOptions,
+    messages: list[Message],
+    turn: int,
+    step: int,
+    request: ModelRequest,
+    ledger: _RetryLedger,
+) -> AssistantTurn | None:
     policy = options.retry_policy
     attempt_no = 0
 
     while True:
         attempt_no += 1
+        permit = _circuit_acquire(options)
+        delay: float | None = None
+        error: ProviderError | None = None
         try:
-            return await _request_assistant_turn(options, messages, turn, step, request)
+            answer = await _request_assistant_turn(options, messages, turn, step, request)
         except asyncio.CancelledError:
+            _circuit_record(options, permit, Outcome.CANCELLED)
             raise
         except Exception as exc:
+            error = as_provider_error(exc)
+            _circuit_record(options, permit, provider_outcome(error))
             if policy is None or _is_cancelled(options):
                 raise
-            error = as_provider_error(exc)
             retries_done = attempt_no - 1
             if not policy.should_retry(error, retries_done):
+                raise
+            if _circuit_open(options):
+                # 这次失败已经把熔断打开（或探测失败）—— 立刻结束，
+                # 不要先睡完退避、再在下一轮才发现不能请求。
                 raise
             delay = policy.delay_for(retries_done + 1, error)
             if delay is None:
                 raise
-            _emit(
-                options,
-                ProviderRetryScheduled(
-                    turn=turn,
-                    step=step,
-                    attempt=retries_done + 1,
-                    delay=delay,
-                    code=error.code,
-                    message=str(error),
-                ),
+        else:
+            # `None` 表示取消（可见前缀已提交），不能当成功。
+            _circuit_record(
+                options, permit, Outcome.CANCELLED if answer is None else Outcome.SUCCESS,
             )
-            if not await _sleep_cancellable(delay, options.cancel_event):
-                raise ProviderError("model request cancelled", ErrorCode.ABORTED) from exc
-            _emit(options, ProviderRetryStarted(turn=turn, step=step, attempt=attempt_no + 1))
+            return answer
+        finally:
+            # 名额先归还，再进入退避：睡眠期间名额不能一直被这条请求占着。
+            _circuit_release(options, permit)
+        assert error is not None and delay is not None
+        ledger.retried = True
+        _emit(
+            options,
+            ProviderRetryScheduled(
+                turn=turn,
+                step=step,
+                attempt=attempt_no,
+                delay=delay,
+                code=error.code,
+                message=str(error),
+            ),
+        )
+        if not await _sleep_cancellable(delay, options.cancel_event):
+            raise ProviderError("model request cancelled", ErrorCode.ABORTED) from error
+        _emit(options, ProviderRetryStarted(turn=turn, step=step, attempt=attempt_no + 1))
+
+
+class _RetryLedger:
+    """逻辑请求的终局账本。
+
+    只统计**进入过重试**的逻辑请求，每条记一次：`recovered` / `failed` / `cancelled`。
+    分母不是物理 attempt —— 一次请求重试三次后成功，按 attempt 算只有 25%，
+    按逻辑请求算是 100%。
+    """
+
+    def __init__(self, options: RunOptions) -> None:
+        self._options = options
+        self.retried = False
+        self._closed = False
+
+    def finish(self, error: BaseException | None = None, *, cancelled: bool = False) -> None:
+        """`cancelled=True` 用于“没抛异常但实际上是取消”的路径（`answer is None`）。"""
+        if self._closed or not self.retried:
+            return
+        self._closed = True
+        # 只看依赖键，**不看熔断是否启用**：重试统计是独立口径，
+        # 关掉熔断不应该让恢复率凭空消失。
+        dependency = self._options.circuit_dependency
+        if not dependency:
+            return
+        if cancelled or (
+            error is not None
+            and (
+                isinstance(error, asyncio.CancelledError)
+                or has_code(error, ErrorCode.ABORTED)
+                or _is_cancelled(self._options)
+            )
+        ):
+            outcome = "cancelled"
+        elif error is None:
+            outcome = "recovered"
+        else:
+            outcome = "failed"
+        metrics.RETRY_OUTCOMES.labels(dependency, outcome).inc()
+        metrics.log("retry.request_finished", dependency=dependency, outcome=outcome)
+
+
+def _circuit_acquire(options: RunOptions) -> Permit | None:
+    circuit, dependency = options.circuit, options.circuit_dependency
+    if circuit is None or not dependency:
+        return None
+    try:
+        return circuit.acquire(dependency)
+    except CircuitOpen as open_error:
+        # 明确错误码 + 不可重试：任务以清晰原因结束，不会继续退避。
+        raise ProviderError(str(open_error), "CIRCUIT_OPEN", retryable=False) from open_error
+
+
+def _circuit_record(options: RunOptions, permit: Permit | None, outcome: Outcome) -> None:
+    if options.circuit is not None:
+        options.circuit.record(permit, outcome)
+
+
+def _circuit_release(options: RunOptions, permit: Permit | None) -> None:
+    if options.circuit is not None:
+        options.circuit.release(permit)
+
+
+def _circuit_open(options: RunOptions) -> bool:
+    circuit, dependency = options.circuit, options.circuit_dependency
+    return circuit is not None and bool(dependency) and circuit.is_open(dependency)
 
 
 async def _request_assistant_turn(
@@ -1001,12 +1124,21 @@ async def _run_group(
         deferred: list[Message] = []
         initiator = TOOL_INITIATOR.set(options.goal_driver)
         try:
-            result = await options.tools.execute(
-                call, ToolContext(cancelled=_cancel_probe(options), session_id=None,
-                                  agent=options.goal_driver, defer_context=deferred.append,
-                                  cancel_event=options.cancel_event,
-                                  run_control=options.run_control, tool_call_id=call.id),
-            )
+            from .metrics import tool_call
+
+            with tool_call(call.name) as measurement, observe(f"tool.{call.name}", "TOOL", **{
+                "tool.name": call.name, "tool_call.id": call.id,
+            }) as span:
+                result = await options.tools.execute(
+                    call, ToolContext(cancelled=_cancel_probe(options), session_id=None,
+                                      agent=options.goal_driver, defer_context=deferred.append,
+                                      cancel_event=options.cancel_event,
+                                      run_control=options.run_control, tool_call_id=call.id),
+                )
+                span.set_attribute("tool.is_error", result.is_error)
+                measurement.outcome = "error" if result.is_error else "ok"
+                if result.is_error:
+                    record_failure(span, "tool_error")
             result.additional_contexts.extend(deferred)
         finally:
             TOOL_INITIATOR.reset(initiator)

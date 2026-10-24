@@ -12,13 +12,26 @@ httpx 是可选依赖：没装时默认 transport 会给出明确报错；测试
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit
 
+from opentelemetry.propagate import inject
+
+from .circuit import (
+    CircuitBreakers,
+    CircuitOpen,
+    Outcome,
+    Permit,
+    rag_dependency,
+    rag_outcome,
+    transport_failure,
+)
 from .contracts import ToolResult
+from .observability import failure, observe
 from .tools import FunctionTool
 
 #: `GET /search` 的返回字段（`apps/rag-api/app/schemas.py::SearchHit`）。
@@ -57,10 +70,14 @@ class RagClient:
     """rag-api 的最小客户端（只覆盖 Agent 需要的两个端点）。"""
 
     def __init__(
-        self, config: RagClientConfig, transport: RagTransport | None = None
+        self,
+        config: RagClientConfig,
+        transport: RagTransport | None = None,
+        breakers: CircuitBreakers | None = None,
     ) -> None:
         self.config = config
         self._transport = transport
+        self._breakers = breakers
 
     async def search(
         self,
@@ -96,12 +113,57 @@ class RagClient:
         return payload
 
     async def _request(self, url: str, params: dict[str, Any]) -> tuple[int, Any]:
-        headers = {"Accept": "application/json"}
-        if self.config.api_key:
-            headers["X-API-Key"] = self.config.api_key
-        if self._transport is not None:
-            return await self._transport(url, params, headers)
-        return await self._httpx_request(url, params, headers)
+        operation = "search" if url == self.config.search_url else "context"
+        # 两个操作分键：search 依赖 embedding/向量检索，context 只读原始片段。
+        # embedding 挂掉不该挡住“读取已有证据”，所以它们不共用一套状态。
+        dependency = rag_dependency(operation, self.config.base_url)
+        permit = self._acquire(dependency)
+        try:
+            with observe(
+                f"rag.client.{operation}", **{"http.request.method": "GET"}
+            ) as span:
+                headers = {"Accept": "application/json"}
+                inject(headers)
+                if self.config.api_key:
+                    headers["X-API-Key"] = self.config.api_key
+                try:
+                    status, payload = (
+                        await self._transport(url, params, headers)
+                        if self._transport is not None
+                        else await self._httpx_request(url, params, headers)
+                    )
+                except asyncio.CancelledError:
+                    self._record(permit, Outcome.CANCELLED)
+                    raise
+                except Exception as exc:
+                    # 只把明确的网络/超时算作依赖故障；httpx 缺装这类本地问题不算。
+                    self._record(
+                        permit, Outcome.FAILURE if transport_failure(exc) else Outcome.IGNORED,
+                    )
+                    raise
+                # 500 在这里是正常返回的 (status, payload)，异常在外层才构造：
+                # 所以必须按状态码记账，否则 500 会被记成成功。
+                self._record(permit, rag_outcome(status))
+                span.set_attribute("http.response.status_code", status)
+                if status >= 400:
+                    failure(span, f"http_{status}")
+                return status, payload
+        finally:
+            if self._breakers is not None and permit is not None:
+                self._breakers.release(permit)
+
+    def _acquire(self, dependency: str) -> Permit | None:
+        if self._breakers is None:
+            return None
+        try:
+            return self._breakers.acquire(dependency)
+        except CircuitOpen as open_error:
+            # 工具返回错误结果，模型可以继续用本地能力并说明“检索不可用”。
+            raise RagError(str(open_error)) from open_error
+
+    def _record(self, permit: Permit | None, outcome: Outcome) -> None:
+        if self._breakers is not None:
+            self._breakers.record(permit, outcome)
 
     async def _httpx_request(
         self, url: str, params: dict[str, Any], headers: dict[str, str]

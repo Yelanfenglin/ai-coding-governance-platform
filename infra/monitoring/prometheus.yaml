@@ -1,0 +1,89 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: local
+
+scrape_configs:
+  - job_name: agent
+    static_configs:
+      - targets: [host.docker.internal:8081]
+  - job_name: rag
+    static_configs:
+      - targets: [host.docker.internal:8000]
+  - job_name: windows
+    static_configs:
+      - targets: [host.docker.internal:9182]
+  - job_name: postgres
+    static_configs:
+      - targets: [host.docker.internal:9187]
+    metric_relabel_configs:
+      - source_labels: [datname]
+        regex: rag_kb|postgres|template0|template1|
+        action: keep
+  - job_name: milvus
+    static_configs:
+      - targets: [rag-milvus:9091]
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: container_label_(annotation|org_opencontainers).*|image
+  - job_name: monitor
+    static_configs:
+      - targets: [prometheus:9090, grafana:3000, loki:3100, alloy:12345, blackbox:9115]
+  - job_name: readiness
+    metrics_path: /probe
+    params:
+      module: [ready_json]
+    static_configs:
+      - targets: [http://host.docker.internal:8000/api/rag/health]
+        labels:
+          service: rag
+    relabel_configs: &probe_relabel
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+  - job_name: agent_readiness
+    metrics_path: /probe
+    params:
+      module: [agent_ready]
+    static_configs:
+      - targets: [http://host.docker.internal:8081/api/agent/health]
+        labels:
+          service: agent
+    relabel_configs: *probe_relabel
+  - job_name: web
+    metrics_path: /probe
+    params:
+      module: [web_http]
+    static_configs:
+      - targets: [http://host.docker.internal:5174/]
+        labels:
+          service: web
+    relabel_configs: *probe_relabel
+  - job_name: postgres_tcp
+    metrics_path: /probe
+    params:
+      module: [tcp]
+    static_configs:
+      - targets: [host.docker.internal:5432]
+        labels:
+          service: postgres
+    relabel_configs: *probe_relabel
+  - job_name: observability_ui
+    metrics_path: /probe
+    params:
+      module: [http]
+    static_configs:
+      - targets: [http://host.docker.internal:6006/]
+        labels:
+          service: phoenix
+      - targets: [http://host.docker.internal:3001/]
+        labels:
+          service: kuma
+    relabel_configs: *probe_relabel

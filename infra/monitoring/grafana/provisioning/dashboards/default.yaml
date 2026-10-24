@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: Embedded assistant
+    folder: Embedded assistant
+    type: file
+    updateIntervalSeconds: 30
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

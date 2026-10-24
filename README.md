@@ -93,6 +93,7 @@ npm run dev
 
 - [架构设计](docs/architecture.md)：运行时、上下文与记忆、RAG、交付检查。
 - [开发与演示](docs/development.md)：测试、固定工程演示、交付评分与离线重评。
+- [系统运行监控](docs/observability.md)：服务与资源、任务和模型指标、RAG 入库、告警、日志与调用链。
 - [Agent 配置](apps/agent-runtime/README.md) · [RAG 服务](apps/rag-api/README.md) · [Web 工作台](apps/web-next/README.md)
 
 ```powershell

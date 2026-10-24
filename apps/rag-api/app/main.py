@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import inspect
 import os
+import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
@@ -14,8 +15,13 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
+from prometheus_client import REGISTRY, CollectorRegistry
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .document_service import DocumentService
+from .observability import metrics
+from .observability.otel import configure as configure_telemetry
+from .observability.otel import trace_request
 from .rag_service import RagQueryService
 from .routers import documents_router, health_router, query_router
 from .routers.health import HealthChecker
@@ -285,6 +291,8 @@ class _UploadTaskRunner:
         self._workers: list[asyncio.Task[None]] = []
         self._started = False
         self._closed = False
+        metrics.INGEST_QUEUED.set_function(self._queue.qsize)
+        metrics.INGEST_WORKERS.set_function(lambda: sum(not w.done() for w in self._workers))
 
     async def submit_path(self, document_id: UUID, path: Path) -> UUID:
         if not isinstance(document_id, UUID):
@@ -354,9 +362,14 @@ class _UploadTaskRunner:
 
     async def _process(self, document_id: UUID, path: Path) -> None:
         pipeline = None
+        started = time.perf_counter()
+        stage, outcome = "load", "ok"
+        metrics.INGEST_ACTIVE.inc()
         try:
             document = await self._repository.get_document(document_id)
+            stage = "layout"
             layout_path = await self._layout_path(path)
+            stage = "ingest"
             pipeline_module = importlib.import_module("app.ingest.pipeline")
             pipeline = pipeline_module.IngestPipeline(
                 self._provider,
@@ -378,7 +391,11 @@ class _UploadTaskRunner:
                     title=str(document.title),
                 )
             )
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
         except Exception:
+            outcome = "error"
             with suppress(Exception):
                 await self._repository.set_status(
                     document_id,
@@ -387,6 +404,12 @@ class _UploadTaskRunner:
                 )
             self._cleanup_staging_path(path)
         finally:
+            seconds = time.perf_counter() - started
+            metrics.INGEST_ACTIVE.dec()
+            metrics.INGEST_SECONDS.observe(seconds)
+            metrics.INGEST_JOBS.labels(outcome, stage if outcome != "ok" else "done").inc()
+            metrics.log("ingest.finished", document_id=str(document_id), outcome=outcome,
+                        stage=stage, seconds=seconds)
             if pipeline is not None:
                 with suppress(Exception):
                     await pipeline.aclose()
@@ -686,6 +709,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = _resolve_settings(app)
     app.state.settings = settings
     app.state.ready = False
+    metrics.configure_logging(_setting(settings, "monitoring_log_path", None))
+    telemetry = configure_telemetry(_setting(settings, "otel_endpoint", None))
     try:
         runtime = await _build_runtime(settings)
         for name, value in runtime.items():
@@ -696,6 +721,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         app.state.ready = False
         await _shutdown_runtime(app)
+        if telemetry is not None:
+            await asyncio.to_thread(telemetry.shutdown)
 
 
 def _api_prefix(settings: object | None) -> str:
@@ -713,7 +740,15 @@ def _api_prefix(settings: object | None) -> str:
 
 
 def create_app(settings: object | None = None) -> FastAPI:
-    application = FastAPI(title="RAG API", version="1.0.0", lifespan=lifespan)
+    application = FastAPI(title="RAG API", version="1.0.0", lifespan=lifespan,
+                          telemetry={"tracing": False})
+    application.middleware("http")(trace_request)
+    http_registry = CollectorRegistry()
+    http_registry.register(REGISTRY)
+    Instrumentator(excluded_handlers=["/metrics", ".*/health"],
+                   registry=http_registry).instrument(application).expose(
+                       application, include_in_schema=False,
+                   )
     if settings is not None:
         # Makes dependency-overridden, lifespan-free ASGI tests deterministic.
         application.state.settings_override = settings

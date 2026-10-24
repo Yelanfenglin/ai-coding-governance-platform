@@ -30,6 +30,7 @@ from .contracts import (
     Usage,
 )
 from .errors import ErrorCode, ProviderError, has_code
+from .observability import observed
 
 # --- checkpoint framing（DSH `summarizer.ts`）---------------------------------
 #
@@ -555,6 +556,7 @@ def _report_summary_usage(
         on_usage(usage)
 
 
+@observed("context.compaction")
 async def compact_context(
     messages: list[Message],
     policy: CompactionPolicy,

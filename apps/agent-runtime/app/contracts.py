@@ -70,6 +70,9 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cached_input_tokens: int | None = None
+    uncached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
     def add(self, other: Usage | None) -> None:
         if other is None:
@@ -77,6 +80,10 @@ class Usage:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.total_tokens += other.total_tokens
+        for name in ("cached_input_tokens", "uncached_input_tokens", "reasoning_tokens"):
+            value = getattr(other, name)
+            if value is not None:
+                setattr(self, name, (getattr(self, name) or 0) + value)
 
 
 @dataclass(slots=True)

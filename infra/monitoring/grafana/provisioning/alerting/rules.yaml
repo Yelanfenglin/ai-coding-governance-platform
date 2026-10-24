@@ -1,0 +1,818 @@
+apiVersion: 1
+groups:
+- orgId: 1
+  name: system-runtime
+  folder: Embedded assistant
+  interval: 30s
+  rules:
+  - uid: service-unreachable
+    title: 服务不可达
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: 1-up{job=~"agent|rag|milvus"}
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: critical
+      system: embedded-assistant
+    annotations:
+      summary: 服务不可达
+      description: 查看 job/instance，先确认服务进程与监听端口，再查看相关依赖。
+      __dashboardUid__: embedded-overview
+      __panelId__: '1'
+    isPaused: false
+  - uid: web-unavailable
+    title: 前端无法访问
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: 1-probe_success{service="web"}
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: critical
+      system: embedded-assistant
+    annotations:
+      summary: 前端无法访问
+      description: ''
+      __dashboardUid__: embedded-overview
+      __panelId__: '1'
+    isPaused: false
+  - uid: rag-not-ready
+    title: RAG 已响应但依赖未就绪
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (1-probe_success{service="rag"}) and on() (up{job="rag"} == 1)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: critical
+      system: embedded-assistant
+    annotations:
+      summary: RAG 已响应但依赖未就绪
+      description: HTTP 200 也可能 ready=false；检查 RAG 的 PostgreSQL/Milvus 健康项。
+      __dashboardUid__: embedded-rag
+      __panelId__: '1'
+    isPaused: false
+  - uid: postgres-down
+    title: PostgreSQL 不可连接
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: 1-probe_success{service="postgres"}
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: critical
+      system: embedded-assistant
+    annotations:
+      summary: PostgreSQL 不可连接
+      description: 本规则只依据 TCP 连通性，不把 exporter 未授权当作数据库故障。
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: collector-down
+    title: 采集端不可达
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: 1-up{job=~"windows|cadvisor|postgres"}
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 采集端不可达
+      description: ''
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: postgres-collection
+    title: PostgreSQL SQL 采集失败
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (max(1-pg_up{job="postgres"}) + max(pg_exporter_last_scrape_error{job="postgres"}))
+          or vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: PostgreSQL SQL 采集失败
+      description: HTTP 在线仍可能认证或查询失败，检查专用监控账号与 exporter 日志。HTTP 不可达由采集端告警覆盖。
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: monitor-down
+    title: 监控组件采集失败
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (1-up{job="monitor"}) or (1-probe_success{job="observability_ui"})
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 监控组件采集失败
+      description: ''
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: disk-low
+    title: 数据磁盘可用空间低于 10%
+    condition: B
+    for: 5m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: 1-(windows_logical_disk_free_bytes{volume=~"[A-Z]:"}/windows_logical_disk_size_bytes
+          >= bool .10)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 数据磁盘可用空间低于 10%
+      description: 检查磁盘、上传文件、日志与时序数据保留量；不要删除业务数据。
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: memory-high
+    title: 主机可用内存持续低于 10%
+    condition: B
+    for: 5m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (1-windows_memory_available_bytes/windows_memory_physical_total_bytes)
+          > bool .90
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 主机可用内存持续低于 10%
+      description: ''
+      __dashboardUid__: embedded-services
+      __panelId__: '1'
+    isPaused: false
+  - uid: model-errors
+    title: 模型请求错误持续增多
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (sum(increase(agent_model_requests_total{outcome="error",code=~"RATE_LIMIT|SERVER|TIMEOUT|TRANSPORT"}[10m]))
+          >= bool 5) or vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 模型请求错误持续增多
+      description: 区分限流、服务端错误、超时与网络故障。健康探测不会消耗模型额度。
+      __dashboardUid__: embedded-tasks
+      __panelId__: '1'
+    isPaused: false
+  - uid: model-slow
+    title: 模型首响应延迟持续偏高
+    condition: B
+    for: 5m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (histogram_quantile(.95,sum by(le,model)(rate(agent_model_first_event_seconds_bucket[10m])))
+          > bool 30) and on(model) (sum by(model)(increase(agent_model_first_event_seconds_count[10m]))
+          >= 5) or vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 模型首响应延迟持续偏高
+      description: 有足够请求样本后检查首个解析事件延迟；首次回答文本另列在看板。
+      __dashboardUid__: embedded-tasks
+      __panelId__: '1'
+    isPaused: false
+  - uid: task-failures
+    title: 任务运行错误持续出现
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (sum(increase(agent_tasks_total{status="error"}[15m])) >= bool 3) or
+          vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 任务运行错误持续出现
+      description: ''
+      __dashboardUid__: embedded-tasks
+      __panelId__: '1'
+    isPaused: false
+  - uid: delivery-failures
+    title: 宿主交付检查持续失败
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (sum(increase(agent_tasks_total{verification="failed"}[15m])) >= bool
+          3) or vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 宿主交付检查持续失败
+      description: 运行 completed 与交付 passed 分开统计；从任务日志定位失败检查。
+      __dashboardUid__: embedded-tasks
+      __panelId__: '1'
+    isPaused: false
+  - uid: retrieval-slow
+    title: 检索延迟持续偏高
+    condition: B
+    for: 5m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (histogram_quantile(.95,sum by(le)(rate(rag_operation_duration_seconds_bucket{operation="rag.search"}[10m])))
+          > bool 10) and on() (sum(increase(rag_operation_duration_seconds_count{operation="rag.search"}[10m]))
+          >= 5) or vector(0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 检索延迟持续偏高
+      description: ''
+      __dashboardUid__: embedded-rag
+      __panelId__: '1'
+    isPaused: false
+  - uid: ingest-no-worker
+    title: 入库积压且 worker 已停止
+    condition: B
+    for: 1m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: (rag_ingest_queued > bool 0) * (rag_ingest_workers == bool 0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 入库积压且 worker 已停止
+      description: ''
+      __dashboardUid__: embedded-rag
+      __panelId__: '1'
+    isPaused: false
+  - uid: task-progress-stale
+    title: 任务长时间没有进展事件
+    condition: B
+    for: 2m
+    noDataState: NoData
+    execErrState: Alerting
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: ((time()-agent_last_event_timestamp_seconds) > bool 300) * (agent_tasks_active
+          > bool 0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 任务长时间没有进展事件
+      description: 需要检查当前模型请求或长命令，缺少事件不等于死锁；不自动终止任务。
+      __dashboardUid__: embedded-tasks
+      __panelId__: '1'
+    isPaused: false
+  - uid: dependency-circuit-rejecting
+    title: 依赖持续熔断且请求被拒绝
+    condition: B
+    for: 1m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      datasourceUid: metrics
+      relativeTimeRange:
+        from: 300
+        to: 0
+      model:
+        refId: A
+        expr: (agent_circuit_state == 1) and on (dependency, instance, job)
+          (increase(agent_circuit_rejected_total[2m]) > 0)
+        instant: true
+        intervalMs: 15000
+        maxDataPoints: 43200
+    - refId: B
+      datasourceUid: __expr__
+      relativeTimeRange:
+        from: 0
+        to: 0
+      model:
+        refId: B
+        type: threshold
+        expression: A
+        conditions:
+        - type: query
+          evaluator:
+            type: gt
+            params:
+            - 0
+          reducer:
+            type: last
+            params: []
+          operator:
+            type: and
+    labels:
+      severity: warning
+      system: embedded-assistant
+    annotations:
+      summary: 依赖持续熔断且仍有请求被拒绝
+      description: 熔断处于打开状态，最近两分钟仍有拒绝增量，并持续一分钟。先查依赖故障与重试日志；空闲时不以熔断状态单独判断服务宕机。
+      __dashboardUid__: embedded-tasks
+      __panelId__: '13'
+    isPaused: false

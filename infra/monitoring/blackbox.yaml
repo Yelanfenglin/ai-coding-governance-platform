@@ -1,0 +1,34 @@
+modules:
+  http:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+  tcp:
+    prober: tcp
+    timeout: 5s
+  ready_json:
+    prober: http
+    timeout: 8s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      fail_if_body_json_not_matches_cel: body.ready == true
+  agent_ready:
+    prober: http
+    timeout: 8s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      headers:
+        Host: 127.0.0.1:8081
+      fail_if_body_json_not_matches_cel: body.ready == true
+  web_http:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      headers:
+        Host: localhost:5174

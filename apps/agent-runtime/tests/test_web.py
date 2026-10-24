@@ -76,6 +76,18 @@ async def connected(tmp_path):
         yield app, client, tmp_path
 
 
+async def test_health_exposes_activity_without_invoking_the_model(connected, monkeypatch):
+    app, client, _ = connected
+
+    def unexpected(**_):
+        raise AssertionError("health must not call a model")
+
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", unexpected)
+    response = await client.get(f"{API_PREFIX}/health")
+    assert response.status_code == 200
+    assert response.json() == {"ready": True, "service": "embedded-agent", "active_task": None}
+
+
 async def test_http_task_edits_real_files_resumes_memory_and_exposes_delivery(
     connected, monkeypatch, capsys,
 ):
