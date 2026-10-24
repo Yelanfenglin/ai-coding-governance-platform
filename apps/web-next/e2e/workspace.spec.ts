@@ -22,8 +22,13 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
     (await (await request.get("/api/agent/conversations")).json()).length,
   ).toBe(0);
   await page.screenshot({ path: testInfo.outputPath("desktop-empty.png") });
-  await page.getByRole("button", { name: "查阅规格依据" }).click();
-  await expect(page.locator("textarea")).toHaveValue(/检索规格书/);
+  await page.getByRole("button", { name: "芯片改型" }).click();
+  await expect(page.getByRole("combobox", { name: "选择开发技能" })).toHaveValue("chip-migration");
+  await page.getByRole("button", { name: "取消技能选择" }).click();
+  await expect(page.getByRole("combobox", { name: "选择开发技能" })).toHaveValue("");
+  await page.getByRole("button", { name: "模块开发" }).click();
+  await expect(page.getByRole("combobox", { name: "选择开发技能" })).toHaveValue("module-development");
+  await expect(page.locator("textarea")).toHaveValue("");
   expect(
     (await (await request.get("/api/agent/conversations")).json()).length,
   ).toBe(0);
@@ -43,6 +48,8 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
     timeout: 20000,
   });
   await expect(page.getByTestId("answer")).toContainText("已创建 generated.c");
+  await expect(page.locator(".user-message .message-skill")).toHaveText("模块开发");
+  await expect(page.getByRole("combobox", { name: "选择开发技能" })).toHaveValue("");
   await expect(page.getByTestId("answer").locator("h2")).toHaveText("已完成");
   await expect(page.getByTestId("answer").locator("pre code")).toContainText(
     "int value = 2;",
@@ -93,6 +100,7 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
   await page.getByRole("button", { name: "收起审阅面板" }).click();
   await page.reload();
   await expect(page.getByTestId("task-status")).toHaveText("执行完成");
+  await expect(page.locator(".user-message .message-skill")).toHaveText("模块开发");
   await page.getByRole("button", { name: /1 个文件改动/ }).click();
   await expect(decision).toContainText("模块示例的配置与接入");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -156,6 +164,7 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
   await expect(page.getByTestId("task-status")).toHaveText("执行完成");
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("combobox", { name: "选择开发技能" }).selectOption("chip-migration");
   await expect(page.locator("textarea")).toBeVisible();
   const composer = await page.locator(".composer").boundingBox();
   expect(composer!.y + composer!.height).toBeLessThan(844);
@@ -191,6 +200,10 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
         row.body.reasoning_effort === "high",
     ),
   ).toBe(true);
+  const firstUser = model[0].body.messages.find((item: { role: string }) => item.role === "user");
+  expect(firstUser.content).toContain('<skill name="module-development"');
+  expect(firstUser.content).toContain("# 工程内的可复用模块开发");
+  expect(model[0].body.messages.filter((item: { role: string }) => item.role === "tool")).toHaveLength(0);
   expect(
     model
       .at(-1)

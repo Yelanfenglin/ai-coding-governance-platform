@@ -10,9 +10,11 @@ OpenAI Agents SDK `Agent.as_tool` at commit `841dfdd938bfd4ca052475eb76d6245a356
 These references do not introduce either runtime as a dependency.
 
 On-demand skill discovery references Pi's `packages/coding-agent/src/core/skills.ts`
-(`loadSkillFromFile` and `formatSkillsForPrompt`) at the same Pi commit. The local
-adapter exposes packaged instructions through `read_skill` and uses the existing
-Agent loop and tools.
+(`loadSkillFromFile` and `formatSkillsForPrompt`) at the same Pi commit. Explicit
+selection also references `AgentSession._expandSkillCommand` in `agent-session.ts`:
+expand the body into the user message before execution. The local adapter uses
+`--skill` and a Web task field instead of slash-command parsing; automatic discovery
+uses `read_skill`. Both paths use the existing Agent loop and tools.
 
 MIT License
 

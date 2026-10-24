@@ -25,6 +25,7 @@ const resources = useResourceStore();
 const projectId = ref("");
 const conversationId = ref("");
 const prompt = ref("");
+const selectedSkill = ref("");
 const currentPrompt = ref("");
 const submitting = ref(false);
 const loadingHistory = ref(false);
@@ -88,30 +89,6 @@ const activityLabel = computed(() =>
         ? "正在整理答复与交付"
         : "正在分析需求",
 );
-const quickStarts = [
-  {
-    icon: "code",
-    title: "实现一个模块",
-    description: "从需求到当前工程里的代码",
-    prompt:
-      "先读取当前工程结构与目标芯片信息，和我确认需求后，再实现一个可复用的外设模块。",
-  },
-  {
-    icon: "book",
-    title: "查阅规格依据",
-    description: "带上型号、版本与原文定位",
-    prompt:
-      "先确认当前工程的目标型号，再检索规格书，解释相关寄存器配置，并保留可追溯的依据。",
-  },
-  {
-    icon: "check",
-    title: "检查现有工程",
-    description: "核对配置、接入与资源使用",
-    prompt:
-      "检查现有工程的模块接入与资源分配，先报告发现的问题，与我确认后再修改。",
-  },
-];
-
 function showError(reason: unknown) {
   formError.value = reason instanceof Error ? reason.message : "请求失败";
 }
@@ -139,6 +116,7 @@ function newConversation() {
   history.value = [];
   currentPrompt.value = "";
   prompt.value = "";
+  selectedSkill.value = "";
   formError.value = "";
   inspectorOpen.value = false;
   sidebarOpen.value = false;
@@ -156,6 +134,7 @@ async function selectConversation(identifier: string) {
   history.value = [];
   currentPrompt.value = "";
   prompt.value = "";
+  selectedSkill.value = "";
   formError.value = "";
   followBottom.value = true;
   loadingHistory.value = true;
@@ -190,9 +169,10 @@ async function start() {
       conversationId.value = record.id;
       localStorage.setItem("agent-conversation", record.id);
     }
-    await task.create(conversationId.value, question);
+    await task.create(conversationId.value, question, selectedSkill.value || null);
     currentPrompt.value = question;
     prompt.value = "";
+    selectedSkill.value = "";
     copied.value = false;
     followBottom.value = true;
     await nextTick();
@@ -222,8 +202,8 @@ async function cancel() {
     showError(reason);
   }
 }
-function useQuickStart(value: string) {
-  prompt.value = value;
+function chooseSkill(name: string) {
+  selectedSkill.value = name;
   void nextTick(() => {
     resizeInput();
     input.value?.focus();
@@ -435,13 +415,15 @@ onBeforeUnmount(() => task.disconnect());
           <p>
             描述开发需求，让助手结合工程与规格书完成实现。<br />代码改动、原文依据和检查结果，都留在当前工作区。
           </p>
-          <div class="quick-starts">
+          <div v-if="resources.skills.length" class="quick-starts">
             <button
-              v-for="item in quickStarts"
-              :key="item.title"
-              @click="useQuickStart(item.prompt)"
+              v-for="item in resources.skills"
+              :key="item.name"
+              :class="{ selected: selectedSkill === item.name }"
+              :aria-pressed="selectedSkill === item.name"
+              @click="chooseSkill(item.name)"
             >
-              <AppIcon :name="item.icon" :size="20" /><strong>{{
+              <AppIcon name="book" :size="20" /><strong>{{
                 item.title
               }}</strong
               ><span>{{ item.description }}</span
@@ -460,7 +442,11 @@ onBeforeUnmount(() => task.disconnect());
         <div v-else class="message-list">
           <template v-for="item in earlier" :key="item.id">
             <article class="message user-message">
-              <div class="user-bubble">{{ item.prompt }}</div>
+              <div class="user-bubble">
+                <span v-if="item.skill" class="message-skill"
+                  ><AppIcon name="book" :size="12" />{{ item.skill_title || item.skill }}</span
+                >{{ item.prompt }}
+              </div>
             </article>
             <article class="message assistant-message">
               <div class="assistant-identity">
@@ -479,7 +465,11 @@ onBeforeUnmount(() => task.disconnect());
             </article>
           </template>
           <article v-if="currentPrompt" class="message user-message">
-            <div class="user-bubble">{{ currentPrompt }}</div>
+            <div class="user-bubble">
+              <span v-if="task.skillTitle" class="message-skill"
+                ><AppIcon name="book" :size="12" />{{ task.skillTitle }}</span
+              >{{ currentPrompt }}
+            </div>
           </article>
           <article
             v-if="currentPrompt"
@@ -578,11 +568,36 @@ onBeforeUnmount(() => task.disconnect());
             @keydown="onKeydown"
           ></textarea>
           <div class="composer-toolbar">
-            <div class="composer-context">
-              <AppIcon name="folder" :size="14" /><span>{{
-                project?.display_name || "本地工作区"
-              }}</span
-              ><span class="composer-model">{{ project?.model }}</span>
+            <div class="composer-meta">
+              <div
+                v-if="resources.skills.length"
+                :class="['skill-picker', { selected: selectedSkill }]"
+              >
+                <AppIcon name="book" :size="13" />
+                <select
+                  v-model="selectedSkill"
+                  aria-label="选择开发技能"
+                  :disabled="task.active || submitting"
+                >
+                  <option value="">自动选择技能</option>
+                  <option v-for="item in resources.skills" :key="item.name" :value="item.name">
+                    {{ item.title }}
+                  </option>
+                </select>
+                <button
+                  v-if="selectedSkill"
+                  type="button"
+                  aria-label="取消技能选择"
+                  :disabled="task.active || submitting"
+                  @click="selectedSkill = ''"
+                ><AppIcon name="close" :size="12" /></button>
+              </div>
+              <div class="composer-context">
+                <AppIcon name="folder" :size="14" /><span>{{
+                  project?.display_name || "本地工作区"
+                }}</span
+                ><span class="composer-model">{{ project?.model }}</span>
+              </div>
             </div>
             <button
               v-if="task.active"

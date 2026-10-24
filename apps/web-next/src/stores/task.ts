@@ -25,6 +25,8 @@ export interface TaskRecord {
   id: string;
   conversation_id: string;
   prompt: string;
+  skill?: string | null;
+  skill_title?: string | null;
   status: TaskState;
   created_at: string;
   response: TaskResponse | null;
@@ -93,6 +95,7 @@ export function stateAfterEvent(
 export const useTaskStore = defineStore("task", {
   state: () => ({
     taskId: null as string | null,
+    skillTitle: null as string | null,
     state: "idle" as TaskState,
     events: [] as TaskEvent[],
     lastSequence: 0,
@@ -126,6 +129,7 @@ export const useTaskStore = defineStore("task", {
     reset() {
       this.disconnect();
       this.taskId = null;
+      this.skillTitle = null;
       this.state = "idle";
       this.events = [];
       this.lastSequence = 0;
@@ -134,12 +138,13 @@ export const useTaskStore = defineStore("task", {
       this.result = null;
       this.delivery = null;
     },
-    async create(conversationId: string, prompt: string) {
+    async create(conversationId: string, prompt: string, skill: string | null = null) {
       const record = await apiRequest<TaskRecord>("/tasks", {
         method: "POST",
         body: JSON.stringify({
           conversation_id: conversationId,
           prompt,
+          skill,
           idempotency_key: crypto.randomUUID(),
         }),
       });
@@ -149,6 +154,7 @@ export const useTaskStore = defineStore("task", {
     attach(record: TaskRecord) {
       this.reset();
       this.taskId = record.id;
+      this.skillTitle = record.skill_title ?? record.skill ?? null;
       this.state = record.status;
       this.connect();
     },

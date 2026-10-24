@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import cli, metrics
 from .circuit import from_env as circuit_from_env
 from .observability import configure
+from .skills import load_skills
 
 API_PREFIX = "/api/agent"
 ACTIVE = {"pending", "running", "cancelling"}
@@ -51,6 +52,7 @@ class TaskInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     conversation_id: UUID
     prompt: str = Field(min_length=1)
+    skill: str | None = Field(default=None, min_length=1)
     idempotency_key: UUID
 
 
@@ -136,9 +138,11 @@ class LocalAgent:
         job.record["status"] = "running"
         job.record["started_at"] = datetime.now(UTC).isoformat()
         job.save()
-        job.publish("TaskStarted", {"prompt": job.record["prompt"]})
+        job.publish("TaskStarted", {"prompt": job.record["prompt"],
+                                    "skill": job.record.get("skill")})
         options = copy.copy(self.options)
         options.question = job.record["prompt"]
+        options.skill = job.record.get("skill")
         options.state_dir = str(self.state)
         options.session = str(self.root / "conversations" / job.record["conversation_id"]
                               / "session.jsonl")
@@ -236,6 +240,11 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
     async def conversations():
         return agent.conversations()
 
+    @api.get("/skills")
+    async def skills():
+        return [{"name": name, "title": skill["title"], "description": skill["description"]}
+                for name, skill in load_skills().items()]
+
     @api.post("/conversations", status_code=201)
     async def create_conversation(body: ConversationInput):
         if body.project_id != "local":
@@ -258,14 +267,20 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
         for job in agent.jobs.values():
             if job.record["idempotency_key"] == str(body.idempotency_key):
                 if (job.record["conversation_id"] != str(body.conversation_id)
-                        or job.record["prompt"] != body.prompt):
+                        or job.record["prompt"] != body.prompt
+                        or job.record.get("skill") != body.skill):
                     raise HTTPException(409, "重复请求的内容不同")
                 return job.record
         if agent.active is not None:
             raise HTTPException(409, "当前工程已有任务运行，请等待完成或先取消")
+        catalog = load_skills()
+        if body.skill is not None and body.skill not in catalog:
+            raise HTTPException(400, "技能不存在，请从开发技能中重新选择")
         identifier = str(uuid4())
         record = {"id": identifier, "conversation_id": str(body.conversation_id),
                   "prompt": body.prompt, "idempotency_key": str(body.idempotency_key),
+                  "skill": body.skill,
+                  "skill_title": catalog[body.skill]["title"] if body.skill else None,
                   "status": "pending", "created_at": datetime.now(UTC).isoformat(),
                   "response": None, "exit_code": None}
         job = WebTask(record, agent.root / "tasks" / identifier)

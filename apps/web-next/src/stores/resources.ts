@@ -18,19 +18,27 @@ export interface ConversationRecord {
   created_at: string;
 }
 
+export interface SkillRecord {
+  name: string;
+  title: string;
+  description: string;
+}
+
 export const useResourceStore = defineStore("resources", {
   state: () => ({
     projects: [] as ProjectRecord[],
     conversations: [] as ConversationRecord[],
+    skills: [] as SkillRecord[],
     loading: false,
   }),
   actions: {
     async load() {
       this.loading = true;
       try {
-        [this.projects, this.conversations] = await Promise.all([
+        [this.projects, this.conversations, this.skills] = await Promise.all([
           apiRequest<ProjectRecord[]>("/projects"),
           apiRequest<ConversationRecord[]>("/conversations"),
+          apiRequest<SkillRecord[]>("/skills"),
         ]);
       } finally {
         this.loading = false;

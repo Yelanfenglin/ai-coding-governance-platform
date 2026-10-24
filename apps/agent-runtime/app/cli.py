@@ -60,7 +60,7 @@ from .rag_tools import RagClient, RagClientConfig, rag_tools
 from .retry import RetryPolicy
 from .session import JsonlSessionStore, repair_tool_pairing
 from .session_search import SessionSearch
-from .skills import load_skills, read_skill_tool, skills_prompt
+from .skills import expand_skill, load_skills, read_skill_tool, skills_prompt
 from .subagents import SubagentRunner
 from .tools import ToolRegistry
 from .workspace_tools import example_tools, workspace_prompt, workspace_tools
@@ -151,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", ""))
     parser.add_argument("--product", default=None, help="default product filter for search_spec")
     parser.add_argument("--version", default=None, help="default version filter for search_spec")
+    parser.add_argument("--skill", default=None, help="explicitly load a named skill for this task")
     parser.add_argument(
         "--rag-url", default=os.environ.get("RAG_API_URL", "http://127.0.0.1:8000/api/rag")
     )
@@ -234,6 +235,8 @@ async def run_once(
     attributes = {"agent.task.id": task_id or str(uuid4()), "agent.model": args.model}
     if conversation_id:
         attributes["session.id"] = conversation_id
+    if args.skill:
+        attributes["agent.skill"] = args.skill
     with observe("agent.task", "AGENT", **attributes) as span:
         status = None
         verification_status = "unverified"
@@ -335,6 +338,11 @@ async def _run_once(
             for tool in example_tools(args.examples_root):
                 registry.register(tool)
     skills = load_skills() if selected else {}
+    try:
+        input_question = expand_skill(args.skill, args.question, skills)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_FAILED
     if skills:
         registry.register(read_skill_tool(skills))
 
@@ -471,7 +479,6 @@ async def _run_once(
             "integration and final validation. Collect required results before the final answer: "
             "this CLI closes unfinished children on return, it is not a background daemon."
         )
-    input_question = args.question
     if delivery is not None and delivery.implementation is not None:
         # Per-turn guidance also reaches sessions created before this tool existed.
         input_question += (

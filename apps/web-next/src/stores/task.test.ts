@@ -58,10 +58,25 @@ describe("local Agent task store", () => {
     await task.create("conversation-1", "write a module");
     expect(urls).toEqual(["/api/agent/tasks/task-1/events?after=0"]);
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(Object.keys(body).sort()).toEqual(["conversation_id", "idempotency_key", "prompt"]);
+    expect(Object.keys(body).sort()).toEqual(["conversation_id", "idempotency_key", "prompt", "skill"]);
+    expect(body.skill).toBeNull();
     streams[0]!.onmessage!({ data: JSON.stringify({ sequence: 1, type: "TaskFinished",
       payload: { status: "completed", response: { answer: "done" } } }) });
     expect(task.answer).toBe("done");
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("submits the selected skill and restores its label from task history", async () => {
+    const task = useTaskStore();
+    vi.spyOn(task, "connect").mockImplementation(() => {});
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "task-2", status: "pending", skill: "module-development", skill_title: "模块开发",
+    }), { status: 201 }));
+    vi.stubGlobal("fetch", fetch);
+    await task.create("conversation-1", "实现模块", "module-development");
+    expect(JSON.parse(fetch.mock.calls[0]![1].body).skill).toBe("module-development");
+    expect(task.skillTitle).toBe("模块开发");
+    task.reset();
+    expect(task.skillTitle).toBeNull();
   });
 });

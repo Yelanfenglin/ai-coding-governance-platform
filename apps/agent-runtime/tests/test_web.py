@@ -300,3 +300,41 @@ async def test_local_service_rejects_foreign_browser_origins_and_arbitrary_paths
         "conversation_id": str(uuid4()), "prompt": "bad", "idempotency_key": str(uuid4()),
     })).status_code == 404
     assert (await client.get(f"{API_PREFIX}/tasks/{uuid4()}/delivery")).status_code == 404
+
+
+async def test_skill_catalog_activation_history_and_per_task_selection(connected, monkeypatch):
+    app, client, workspace = connected
+    catalog = (await client.get(f"{API_PREFIX}/skills")).json()
+    assert {item["name"] for item in catalog} >= {"chip-migration", "module-development"}
+    assert all(set(item) == {"name", "title", "description"} for item in catalog)
+    provider = Provider([final("selected"), final("ordinary")])
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", lambda **_: provider)
+    identifier = await conversation(client)
+    payload = {"conversation_id": identifier, "prompt": "本轮需求",
+               "idempotency_key": str(uuid4()), "skill": "module-development"}
+    created = await client.post(f"{API_PREFIX}/tasks", json=payload)
+    assert created.status_code == 201
+    record = await complete(app, created.json()["id"])
+    assert record["skill"] == "module-development" and record["skill_title"] == "模块开发"
+    first = provider.requests[0].messages[-1]
+    assert first.role == "user" and '<skill name="module-development"' in first.content
+    assert "# 工程内的可复用模块开发" in first.content
+    assert not any(m.tool_calls for m in provider.requests[0].messages)
+    assert (await client.post(f"{API_PREFIX}/tasks", json=payload)).json()["id"] == record["id"]
+    assert (await client.post(f"{API_PREFIX}/tasks", json={
+        **payload, "skill": "chip-migration",
+    })).status_code == 409
+
+    invalid = await client.post(f"{API_PREFIX}/tasks", json={
+        **payload, "idempotency_key": str(uuid4()), "skill": "../unknown",
+    })
+    assert invalid.status_code == 400 and len(app.state.agent.jobs) == 1
+    continued = await start(client, identifier, "普通追问")
+    after = await complete(app, continued.json()["id"])
+    assert after["skill"] is None
+    assert provider.requests[-1].messages[-1].content.startswith("普通追问\n")
+    assert '<skill name=' not in provider.requests[-1].messages[-1].content
+    assert sum('<skill name="module-development" location=' in m.content
+               for m in provider.requests[-1].messages) == 1
+    restarted = create_app(options(workspace))
+    assert restarted.state.agent.jobs[record["id"]].record["skill_title"] == "模块开发"

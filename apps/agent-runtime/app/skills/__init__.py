@@ -29,8 +29,24 @@ def load_skills(directory: Path = Path(__file__).parent) -> dict[str, dict]:
             raise ValueError(f"skill requires a name and description: {path}")
         if name in skills:
             raise ValueError(f"duplicate skill: {name}")
-        skills[name] = {"description": description, "path": path}
+        skills[name] = {"title": metadata.get("title", name),
+                        "description": description, "path": path}
     return skills
+
+
+def expand_skill(name: str | None, question: str, skills: dict[str, dict]) -> str:
+    """Pi AgentSession._expandSkillCommand: explicit selection expands before the model call."""
+    if name is None:
+        return question
+    if name not in skills:
+        raise ValueError(f"unknown skill: {name}")
+    path = skills[name]["path"]
+    body = path.read_text(encoding="utf-8").split("---", 2)[2].strip()
+    return (
+        f'<skill name="{escape(name)}" location="{escape(str(path))}">\n'
+        f"The user selected this skill for the current task. References are relative to "
+        f"{path.parent}.\n\n{body}\n</skill>\n\n{question}"
+    )
 
 
 def skills_prompt(skills: dict[str, dict]) -> str:

@@ -470,7 +470,7 @@ summary::-webkit-details-marker {
 }
 .quick-starts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 36px;
 }
@@ -490,6 +490,10 @@ summary::-webkit-details-marker {
   border-color: #a7c0e6;
   box-shadow: 0 5px 15px #25436a09;
   transform: translateY(-2px);
+}
+.quick-starts > button.selected {
+  border-color: #93b2df;
+  background: #f3f7fd;
 }
 .quick-starts > button > svg:first-child {
   color: #6a85ac;
@@ -562,6 +566,16 @@ summary::-webkit-details-marker {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.85;
+}
+.message-skill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin-bottom: 6px;
+  color: #5676a4;
+  font-size: 11px;
+  white-space: normal;
 }
 .assistant-message {
   margin-bottom: 35px;
@@ -848,6 +862,47 @@ summary::-webkit-details-marker {
   min-width: 0;
   font-size: 10px;
   color: #8390a3;
+}
+.composer-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 12px;
+  min-width: 0;
+}
+.skill-picker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #768398;
+  font-size: 11px;
+}
+.skill-picker.selected {
+  color: #3269c9;
+  border-color: #cbdcf5;
+  background: #f3f7fd;
+}
+.skill-picker select {
+  max-width: 125px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.skill-picker button {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.skill-picker select:focus-visible {
+  outline: 2px solid #5f96ea;
+  outline-offset: 2px;
 }
 .composer-context > span {
   overflow: hidden;
