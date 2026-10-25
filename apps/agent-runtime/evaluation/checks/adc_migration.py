@@ -246,8 +246,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--explore-sequences", action="store_true",
+                        help="also explore and shrink ADC API sequences (requires hypothesis)")
+    parser.add_argument("--sequence-examples", type=int, default=300)
+    parser.add_argument("--sequence-steps", type=int, default=30)
+    parser.add_argument("--sequence-seed", type=int, default=0)
     args = parser.parse_args()
     report = check(args.workspace, args.out)
+    if args.explore_sequences:
+        from evaluation.checks.adc_sequences import check_sequences, feedback
+
+        sequences = check_sequences(args.workspace, args.out / "sequences",
+                                    max_examples=args.sequence_examples,
+                                    max_steps=args.sequence_steps, seed=args.sequence_seed)
+        report["sequence_exploration"] = sequences
+        report["checks"].append({"id": "adc_sequence_differential",
+                                 "passed": sequences["passed"], "detail": feedback(sequences)})
+        report["passed"] = report["passed"] and sequences["passed"]
     (args.out / "migration_checks.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
     )

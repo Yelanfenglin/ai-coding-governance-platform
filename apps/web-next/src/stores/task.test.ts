@@ -79,4 +79,39 @@ describe("local Agent task store", () => {
     task.reset();
     expect(task.skillTitle).toBeNull();
   });
+
+  it("loads a recheck without rewriting the original failed task", async () => {
+    const task = useTaskStore();
+    task.taskId = "task-1";
+    task.state = "failed";
+    task.result = { verification: { status: "failed" } };
+    const delivery = { task_acceptance: "failed", recheck: { runs: [{ passed: true }] } };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ passed: true })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(delivery)));
+    vi.stubGlobal("fetch", fetch);
+    await task.recheck();
+    expect(fetch.mock.calls[0]![0]).toBe("/api/agent/tasks/task-1/recheck");
+    expect(fetch.mock.calls[0]![1].method).toBe("POST");
+    expect(task.delivery).toEqual(delivery);
+    expect(task.state).toBe("failed");
+    expect(task.result.verification!.status).toBe("failed");
+    expect(task.recheckingTaskId).toBeNull();
+  });
+
+  it("does not apply a late recheck to a different selected task", async () => {
+    const task = useTaskStore();
+    task.taskId = "old";
+    let finish!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changed_files: ["old.c"] }))));
+    const pending = task.recheck();
+    task.reset();
+    task.taskId = "new";
+    finish(new Response(JSON.stringify({ passed: true })));
+    await pending;
+    expect(task.delivery).toBeNull();
+    expect(task.recheckError).toBeNull();
+  });
 });

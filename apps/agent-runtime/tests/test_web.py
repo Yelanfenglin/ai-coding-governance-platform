@@ -338,3 +338,63 @@ async def test_skill_catalog_activation_history_and_per_task_selection(connected
                for m in provider.requests[-1].messages) == 1
     restarted = create_app(options(workspace))
     assert restarted.state.agent.jobs[record["id"]].record["skill_title"] == "模块开发"
+
+
+async def test_http_recheck_is_exclusive_persistent_and_does_not_rerun_model(tmp_path, monkeypatch):
+    from app.project_verification import ProjectVerification
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "module.c").write_text("int value = 1;\n")
+    health = tmp_path / "health.txt"
+    health.write_text("down")
+    config = tmp_path / "verification.json"
+    config.write_text(json.dumps({"command": ["{python}", "-c",
+        f"from pathlib import Path; raise SystemExit(0 if Path({str(health)!r}).read_text()"
+        " == 'ready' else 7)"]}))
+    opts = options(workspace, "--verification", str(config))
+    app = create_app(opts)
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", lambda **_: Provider([final()]))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://127.0.0.1") as client:
+        identifier = await conversation(client)
+        created = await start(client, identifier)
+        record = await complete(app, created.json()["id"])
+        job = app.state.agent.jobs[record["id"]]
+        originals = {p: p.read_bytes() for p in (
+            job.directory / "task.json", job.directory / "events.jsonl",
+            job.directory / "delivery/delivery.json",
+        )}
+        assert record["status"] == "failed"
+
+        def no_model(**_):
+            raise AssertionError("recheck must not call a model")
+
+        monkeypatch.setattr(cli, "OpenAiCompatibleProvider", no_model)
+        health.write_text("ready")
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_run = ProjectVerification.run
+
+        async def paused_run(self, *, phase):
+            entered.set()
+            await release.wait()
+            return await original_run(self, phase=phase)
+
+        monkeypatch.setattr(ProjectVerification, "run", paused_run)
+        endpoint = f"{API_PREFIX}/tasks/{record['id']}/recheck"
+        recheck = asyncio.create_task(client.post(endpoint))
+        await asyncio.wait_for(entered.wait(), 3)
+        assert (await client.post(endpoint)).status_code == 409
+        assert (await start(client, identifier, "new task")).status_code == 409
+        release.set()
+        response = await recheck
+        assert response.status_code == 200 and response.json()["passed"]
+        assert all(p.read_bytes() == value for p, value in originals.items())
+
+    restarted = create_app(opts)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted),
+                                 base_url="http://127.0.0.1") as client:
+        delivery = (await client.get(f"{API_PREFIX}/tasks/{record['id']}/delivery")).json()
+        assert delivery["task_acceptance"] == "failed"
+        assert delivery["recheck"]["runs"][0]["passed"]
+        assert delivery["recheck"]["runs"][0]["matches_current"]

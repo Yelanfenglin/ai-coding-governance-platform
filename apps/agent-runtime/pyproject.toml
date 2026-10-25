@@ -20,6 +20,7 @@ http = ["httpx>=0.28,<1"]
 web = ["httpx>=0.28,<1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-dotenv>=1,<2",
        "prometheus-fastapi-instrumentator>=8.1,<9"]
 dev = ["pytest>=8.4,<9", "pytest-asyncio>=0.25,<2", "ruff>=0.16,<1"]
+evaluation = ["hypothesis>=6.100,<7"]
 
 [tool.setuptools.packages.find]
 where = ["."]

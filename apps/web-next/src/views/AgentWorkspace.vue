@@ -63,6 +63,7 @@ const canSend = computed(
     !!projectId.value &&
     !!prompt.value.trim() &&
     !task.active &&
+    !task.recheckingTaskId &&
     !submitting.value &&
     !loadingHistory.value,
 );
@@ -644,6 +645,10 @@ onBeforeUnmount(() => task.disconnect());
       v-model:tab="reviewTab"
       :delivery="task.delivery"
       :result="task.result"
+      :rechecking="task.recheckingTaskId === task.taskId && task.taskId !== null"
+      :recheck-disabled="task.active || task.recheckingTaskId !== null"
+      :recheck-error="task.recheckError"
+      @recheck="task.recheck()"
       @close="inspectorOpen = false"
     />
   </div>

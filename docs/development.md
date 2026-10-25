@@ -69,6 +69,39 @@ $verificationPath = Join-Path $demoRun 'verification.json'
 分别编译并执行源与目标模块；目标另外验证工程登记、系统配置及原有 TC1 中断和心跳。
 这是主机侧模块验收，厂商编译和板卡运行分别记录。
 
+### ADC 操作序列探索（可选）
+
+在 `apps/agent-runtime` 安装 `.[evaluation]` 后，可给原迁移检查增加序列探索：
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+.venv/Scripts/python.exe -m pip install -e ".[evaluation]"
+.venv/Scripts/python.exe evaluation/checks/adc_migration.py --workspace <迁移工程目录> --out <工程外检查目录> --explore-sequences --sequence-examples 300 --sequence-steps 30 --sequence-seed 20261025
+```
+
+检查器编译源、目标 C 模块，从空闲、转换中、完成但未轮询、结果就绪四个正常状态
+开始组合 `Start`、`Poll`、`Read`、空指针读取和转换完成事件，逐步比较返回值、输出参数
+与 ADS。转换完成仅在 ADS 置位时注入；随机值覆盖 16 位结果寄存器。
+[Hypothesis](https://hypothesis.readthedocs.io/en/latest/stateful.html) 负责生成与缩减，
+状态到达过程也保留在反例中。`max_examples` 限制搜索样本量，失败后的缩减会增加执行次数。
+
+原有固定检查继续验证型号配置、工程完整性和 TC1 业务。序列检查作为补充，默认关闭；
+无差异表示在本次搜索预算内未发现差异。源实现是比较基准，双方共有的问题不能靠差分识别。
+主机寄存器替身不模拟 ADC 时序、模拟精度或厂商 ABI，也不检查私有状态变量。
+
+失败时，命令标准输出给出缩减序列、首次差异和重放命令，完整轨迹保存在
+`sequences/counterexample.json`；可直接放入已有 `--verification` 的宿主固定命令，
+由 `verify_project` 将实际输出返回模型。构建与报告目录须在被检查工程外，避免改变工程版本。
+修复后先重放反例，再运行完整检查：
+
+```powershell
+.venv/Scripts/python.exe evaluation/checks/adc_sequences.py --workspace <迁移工程目录> --out <工程外重放目录> --replay <反例文件.json>
+```
+
+反例为普通 JSON，重放不重新搜索，也不依赖随机种子；完整搜索的复现需要相同 Hypothesis
+版本与参数。`sequence_checks.json` 分别记录搜索/缩减次数与反例确认/重放次数，以及版本、
+搜索参数和耗时；缩减结果不承诺全局最短。
+
 `evaluation.runner` 复用冻结 case 与独立行为检查，不调用模型：
 
 ```powershell
@@ -78,6 +111,24 @@ $verificationPath = Join-Path $demoRun 'verification.json'
 ```
 
 Web 任务的交付文件位于工程 `.agent-runtime/web/tasks/<task-id>/delivery/`。同一工程持续修改时，每轮另存 checkpoint；历史评分必须使用该轮最终版本。
+
+### 交付后复验
+
+工作台的“工程审阅 → 验收”提供“重新验收当前交付”。它仅执行宿主配置的检查，
+不调用模型；复验期间同一服务不启动其他工程任务。每次结果单独保存到交付目录的
+`rechecks/`，原任务状态、退出码、`delivery.json` 与事件记录保留。
+
+复验前核对当前工程版本与原交付一致，且宿主命令、工作目录、超时参数与原最终检查相同。
+工程或配置已改变时拒绝复验；运行过程中改变工程也不能判为通过。旧复验在工程变化后
+重新加载时标为过期。可用 CLI 对已有交付做相同操作：
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+.venv/Scripts/python.exe -m app.reverification --workspace <工程目录> --delivery <delivery.json> --verification <宿主验收配置.json>
+```
+
+“原交付失败、后来复验通过”作为两条结果展示，不自动重试、不修改原成绩，也不将复验
+通过改写为该轮模型自主交付成功。
 
 批次清单每行声明 `case`、`delivery`、`workspace`，相对路径以清单所在目录为基准。确认无人工代码修复时才设置 `human_interventions=0`，未知保持空值。评分核对冻结起点、最终版本、任务状态、清单、保护文件与独立行为；缺失运行与失败保留在分母。
 

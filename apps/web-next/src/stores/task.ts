@@ -47,6 +47,20 @@ export interface Delivery {
   verification: { status: string };
   task_acceptance: string;
   decisions?: ImplementationDecision[] | null;
+  recheck?: {
+    available: boolean;
+    reason: string | null;
+    runs: Array<{
+      id: string;
+      started_at: string;
+      status: string;
+      passed: boolean;
+      matches_current: boolean;
+      output?: string;
+      error?: string;
+      exit_code?: number;
+    }>;
+  };
 }
 
 export interface DecisionEvidence {
@@ -104,6 +118,8 @@ export const useTaskStore = defineStore("task", {
     answer: "",
     result: null as TaskResponse | null,
     delivery: null as Delivery | null,
+    recheckingTaskId: null as string | null,
+    recheckError: null as string | null,
   }),
   getters: {
     active: (state) =>
@@ -137,6 +153,7 @@ export const useTaskStore = defineStore("task", {
       this.answer = "";
       this.result = null;
       this.delivery = null;
+      this.recheckError = null;
     },
     async create(conversationId: string, prompt: string, skill: string | null = null) {
       const record = await apiRequest<TaskRecord>("/tasks", {
@@ -199,6 +216,21 @@ export const useTaskStore = defineStore("task", {
           this.error =
             reason instanceof Error ? reason.message : "交付记录读取失败";
         }
+      }
+    },
+    async recheck() {
+      const identifier = this.taskId;
+      if (!identifier || this.active || this.recheckingTaskId) return;
+      this.recheckingTaskId = identifier;
+      this.recheckError = null;
+      try {
+        await apiRequest(`/tasks/${identifier}/recheck`, { method: "POST" });
+        await this.loadDelivery(identifier);
+      } catch (reason) {
+        if (this.taskId === identifier)
+          this.recheckError = reason instanceof Error ? reason.message : "复验失败";
+      } finally {
+        this.recheckingTaskId = null;
       }
     },
     disconnect() {

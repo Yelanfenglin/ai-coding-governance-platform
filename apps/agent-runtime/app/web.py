@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import cli, metrics
 from .circuit import from_env as circuit_from_env
 from .observability import configure
+from .reverification import recheck_delivery, recheck_summary
 from .skills import load_skills
 
 API_PREFIX = "/api/agent"
@@ -97,6 +98,7 @@ class LocalAgent:
         self.root = self.state / "web"
         self.jobs: dict[str, WebTask] = {}
         self.active: WebTask | None = None
+        self.rechecking = False
         for path in (self.root / "tasks").glob("*/task.json"):
             record = json.loads(path.read_text(encoding="utf-8"))
             events_path = path.parent / "events.jsonl"
@@ -271,7 +273,7 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
                         or job.record.get("skill") != body.skill):
                     raise HTTPException(409, "重复请求的内容不同")
                 return job.record
-        if agent.active is not None:
+        if agent.active is not None or agent.rechecking:
             raise HTTPException(409, "当前工程已有任务运行，请等待完成或先取消")
         catalog = load_skills()
         if body.skill is not None and body.skill not in catalog:
@@ -338,7 +340,24 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
         report = json.loads(path.read_text(encoding="utf-8"))
         return {key: report.get(key) for key in (
             "changed_files", "commands", "evidence", "verification", "task_acceptance", "decisions",
-        )} | {"diff": (path.parent / "changes.diff").read_text(encoding="utf-8", errors="replace")}
+        )} | {"diff": (path.parent / "changes.diff").read_text(encoding="utf-8", errors="replace"),
+              "recheck": recheck_summary(path, options.verification, agent.workspace)}
+
+    @api.post("/tasks/{identifier}/recheck")
+    async def recheck(identifier: UUID):
+        job = agent.job(identifier)
+        if agent.active is not None or agent.rechecking:
+            raise HTTPException(409, "当前工程正在执行任务或复验，请等待完成")
+        path = job.directory / "delivery" / "delivery.json"
+        if not path.is_file():
+            raise HTTPException(404, "本次任务尚无交付记录")
+        agent.rechecking = True
+        try:
+            return await recheck_delivery(path, options.verification, agent.workspace)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        finally:
+            agent.rechecking = False
 
     app.include_router(api)
     if ui_directory is not None:

@@ -15,8 +15,11 @@ import ImplementationReview from "./ImplementationReview.vue";
 const props = defineProps<{
   delivery: Delivery | null;
   result: TaskResponse | null;
+  rechecking?: boolean;
+  recheckDisabled?: boolean;
+  recheckError?: string | null;
 }>();
-defineEmits<{ close: [] }>();
+defineEmits<{ close: []; recheck: [] }>();
 const tab = defineModel<string>("tab", { default: "changes" });
 const selectedFile = ref("");
 const selectedSource = ref("");
@@ -244,6 +247,27 @@ const command = (row: Record<string, unknown>) => {
           }}</pre>
           <pre class="tool-output">{{ run.output }}</pre>
         </details>
+        <section v-if="delivery?.recheck" class="recheck-section" aria-label="交付复验">
+          <div class="panel-section-title">交付后复验</div>
+          <p class="panel-description">对同一版工程重新检查。原交付结果和每次复验分别保留。</p>
+          <button
+            v-if="delivery.recheck.available"
+            class="recheck-button"
+            :disabled="rechecking || recheckDisabled"
+            @click="$emit('recheck')"
+          >{{ rechecking ? "正在复验…" : "重新验收当前交付" }}</button>
+          <p v-else class="panel-description">{{ delivery.recheck.reason }}</p>
+          <p v-if="recheckError" role="alert">{{ recheckError }}</p>
+          <details v-for="run in delivery.recheck.runs" :key="run.id" class="check-run">
+            <summary>
+              <AppIcon :name="run.passed && run.matches_current ? 'check' : 'warning'" :size="15" />
+              {{ run.passed ? (run.matches_current ? "复验通过" : "复验已过期") :
+                run.status === 'failed' ? "复验未通过" : "复验未完成" }}
+              <span>{{ new Date(run.started_at).toLocaleString() }}</span>
+            </summary>
+            <pre class="tool-output">{{ run.output || run.error }}</pre>
+          </details>
+        </section>
         <div v-if="delivery?.commands.length" class="command-records">
           <div class="panel-section-title">实际运行的命令</div>
           <details
@@ -279,3 +303,16 @@ const command = (row: Record<string, unknown>) => {
     </footer>
   </aside>
 </template>
+
+<style scoped>
+.recheck-section { margin: 22px 0; }
+.recheck-button {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 12px;
+  background: var(--surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+.recheck-button:disabled { opacity: 0.55; cursor: default; }
+</style>
