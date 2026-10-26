@@ -21,6 +21,28 @@ $env:PYTHONNOUSERSITE='1'
 
 真实数据库与向量库测试按 integration 标记单独运行；真实模型任务与自动化接线测试分开记录。
 
+## C 源码定位
+
+工作区默认提供两个只读工具，Web 与 CLI 共用；启用子 Agent 时也开放给只读研究工具集。
+
+- `find_symbols`：`query` 按名字包含匹配，可用 `kind=function/macro/type` 筛选，返回定义或声明、签名、文件和行号；`include_body=true` 附带最多 40 行原文。
+- `find_symbol_references`：`query` 精确匹配标识符，返回调用或引用、所属函数及附近代码。定义和声明也会作为相应类型的匹配返回。
+
+例如先以 `find_symbols(query="Init", kind="function", path="src")` 找入口，再按完整函数名
+调用 `find_symbol_references` 找调用方；需要更多实现细节时，用已有 `read_file` 读取返回的范围。
+默认返回最多 20 条，`max_results` 可设为 1～100；`total_matches` 与 `truncated` 表示截断情况，
+命中过多时缩小查询或路径。
+
+解析使用 [py-tree-sitter](https://tree-sitter.github.io/py-tree-sitter/) 和官方
+[C grammar](https://github.com/tree-sitter/tree-sitter-c)。支持 `.c/.h`（含大写扩展名），
+按每次调用时的实际文件读取，编辑、增加或删除文件后再次查询即可。默认跳过 `.git`、
+`.venv`、`node_modules`、`__pycache__`、`.agent-runtime`、`.agent-demo-backups`、`output`、
+`build`、`dist` 目录；显式指定其中的 C 文件仍可读取，路径须在工作区内。
+
+这是语法定位：注释和字符串不作为引用，条件编译分支全部保留，不展开宏或解析函数指针目标，
+跨文件同名符号需结合文件和调用方核对。厂商扩展或宏修饰符可能使部分声明无法识别，
+结果的 `diagnostics` 会报告解析问题。它不替代编译器的语义分析和工程验收。
+
 ## 固定工程演示
 
 示例任务：在 M9P6362 V1.16 的 PWM0＋USART0＋ADC＋TC1 工程上，把 PWM0 从 30% 改成 40%，保持 20kHz；USART0 从 115200 改成 57600，保留非阻塞收发、接收中断与原有业务。

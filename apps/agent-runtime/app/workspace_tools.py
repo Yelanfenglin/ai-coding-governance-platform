@@ -105,6 +105,8 @@ async def execute_command(root: Path, args: dict) -> ToolResult:
 def workspace_tools(directory: str | Path, *, manifest: bool | None = None) -> list[FunctionTool]:
     """`manifest` 为 None 时按磁盘上是否已有清单自动决定，模块模式显式要求常驻。"""
 
+    from .source_symbols import symbol_tools
+
     root = Path(directory).resolve()
 
     def list_files(args, context):
@@ -178,6 +180,7 @@ def workspace_tools(directory: str | Path, *, manifest: bool | None = None) -> l
                              "timeout": {"type": "number", "exclusiveMinimum": 0}}, ["command"]),
                      run_command),
     ]
+    tools.extend(symbol_tools(root))
     if manifest or (manifest is None and (root / MANIFEST_STATE_FILE).is_file()):
         tools.append(manifest_tool(root))
     return tools
@@ -257,6 +260,8 @@ def example_tools(directory: str | Path) -> list[FunctionTool]:
 WORKSPACE_PROMPT = """## 本地嵌入式开发
 你可以读、编辑、创建工程文件并运行命令，由你根据需求规划和调整步骤。
 先定位相关工程入口、源文件、现有功能和约束；独立的读取/检索可并行，不必通读所有文件。
+C工程可先用find_symbols找定义和签名，用find_symbol_references找调用方及相关片段，
+再按返回的文件和行号读取需要的原文；同名匹配不代表已经解析了链接关系。
 已知位置的独立读取、同一文件中可确定的多处编辑可在同一轮提交；有依赖的操作按结果推进。
 规格检索用于补充明确缺失的事实。先定位，再用read_context展开选中的证据；
 已有资料足以实施时就修改和验证，不反复扩大检索。遇到真实阻塞才停下说明。

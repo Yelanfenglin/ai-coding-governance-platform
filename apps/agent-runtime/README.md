@@ -22,6 +22,7 @@ CLI 读取进程环境变量，Web 可通过 `--env-file` 加载 `.env`：
 ## 工具与任务
 
 - 通用工程工具：`list_files`、`read_file`、`write_file`、`edit_file`、`run_command`。
+- C 源码定位：`find_symbols` 查函数定义/声明、宏和类型；`find_symbol_references` 按精确名称查调用与引用，返回所属函数和源码行号。支持 `.c/.h` 及大写扩展名，可按路径缩小范围。基于语法分析，宏、条件编译与同名符号的边界见[开发说明](../../docs/development.md#c-源码定位)。
 - 开发 Skill：普通工作区提供模块开发、芯片改型的摘要，模型通过 `read_skill` 按需读取。Web 可在聊天中显式选择，CLI 使用 `--skill module-development` 或 `--skill chip-migration`；显式选择在首次请求前展开正文，实际指导随会话保存。下一轮仍可普通聊天，继续复用通用工具与同一个运行循环。
 - 规格检索：`search_spec` 返回定位摘要，`read_context` 展开完整上下文；引用保留文档、片段、型号、版本、页码和章节。
 - 模块工具：通过 `--demo-project` 或 `--firmware-project` 接入例程目录与模块生成；通用工作区仍可编辑和接入其他模块。

@@ -434,7 +434,8 @@ async def _run_once(
             child_tools.register(tool)
         if selected:
             for tool in workspace_tools(selected):
-                if tool.name in {"list_files", "read_file", "check_project_manifest"}:
+                if tool.name in {"list_files", "read_file", "check_project_manifest",
+                                  "find_symbols", "find_symbol_references"}:
                     child_tools.register(tool)
         if args.examples_root:
             for tool in example_tools(args.examples_root):

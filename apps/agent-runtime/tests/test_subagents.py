@@ -195,6 +195,7 @@ async def test_cli_subagents_inherit_model_configuration_and_have_read_only_tool
     assert configurations[1]["thinking"] == "enabled"
     assert configurations[1]["reasoning_effort"] == "high"
     names = {t.name for t in child.requests[0].tools}
-    assert {"read_file", "search_spec", "read_context", "search_sessions"} <= names
+    assert {"read_file", "search_spec", "read_context", "search_sessions",
+            "find_symbols", "find_symbol_references"} <= names
     assert not names.intersection({"write_file", "edit_file", "run_command", "remember_fact",
                                    "replace_fact", "forget_fact", "subagent"})

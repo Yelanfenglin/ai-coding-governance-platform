@@ -94,6 +94,8 @@ export function toolActivities(
 const labels: Record<string, [string, string]> = {
   list_files: ["浏览工程", "folder"],
   read_file: ["读取文件", "file"],
+  find_symbols: ["定位源码符号", "code"],
+  find_symbol_references: ["查找符号引用", "search"],
   write_file: ["写入文件", "code"],
   edit_file: ["修改文件", "code"],
   run_command: ["运行命令", "terminal"],
