@@ -25,13 +25,19 @@ $env:PYTHONNOUSERSITE='1'
 
 工作区默认提供两个只读工具，Web 与 CLI 共用；启用子 Agent 时也开放给只读研究工具集。
 
-- `find_symbols`：`query` 按名字包含匹配，可用 `kind=function/macro/type` 筛选，返回定义或声明、签名、文件和行号；`include_body=true` 附带最多 40 行原文。
+- `find_symbols`：`query` 默认先按完整名称精确匹配，没有精确结果时再包含匹配；`match=exact/contains` 可显式选择。可用 `kind=function/macro/type` 筛选，返回定义或声明、签名、文件和行号；`include_body=true` 附带最多 40 行原文。
 - `find_symbol_references`：`query` 精确匹配标识符，返回调用或引用、所属函数及附近代码。定义和声明也会作为相应类型的匹配返回。
 
 例如先以 `find_symbols(query="Init", kind="function", path="src")` 找入口，再按完整函数名
 调用 `find_symbol_references` 找调用方；需要更多实现细节时，用已有 `read_file` 读取返回的范围。
 默认返回最多 20 条，`max_results` 可设为 1～100；`total_matches` 与 `truncated` 表示截断情况，
 命中过多时缩小查询或路径。
+
+完整名称查询会保留全部同名结果，并通过 `omitted_partial_matches` 告知过滤了多少包含匹配，
+需要查包装函数或相关名称时可用 `match=contains`。默认诊断仅返回命中文件的摘要；
+`files_with_parse_issues` 与 `unreadable_files` 保留全扫描的问题计数，避免将无结果误认成
+完整解析成功。需要具体错误位置时，指定文件并设置 `include_diagnostics=true`；
+该参数可展开扫描诊断，最多返回 20 个文件、每文件最多 5 处解析位置。
 
 解析使用 [py-tree-sitter](https://tree-sitter.github.io/py-tree-sitter/) 和官方
 [C grammar](https://github.com/tree-sitter/tree-sitter-c)。支持 `.c/.h`（含大写扩展名），

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from itertools import islice
 from pathlib import Path
 
 import tree_sitter_c
@@ -112,9 +113,13 @@ def inspect_source(root: Path, args: dict, *, references: bool = False) -> dict:
         tree = parsed.root_node
         lines = document.text.splitlines()
         if tree.has_error:
-            locations = [{"line": n.start_point.row + 1, "node": n.type}
-                         for n in walk(tree) if n.is_error or n.is_missing]
-            diagnostics.append({"path": relative, "parse_errors": locations[:5]})
+            diagnostic = {"path": relative, "has_parse_errors": True}
+            if args.get("include_diagnostics", False):
+                errors = (n for n in walk(tree) if n.is_error or n.is_missing)
+                diagnostic["parse_errors"] = [
+                    {"line": n.start_point.row + 1, "node": n.type} for n in islice(errors, 5)
+                ]
+            diagnostics.append(diagnostic)
         declared = list(declarations(tree))
         if references:
             roles = {name.start_byte: f"{kind}_{role}" for name, _, kind, role in declared}
@@ -158,15 +163,40 @@ def inspect_source(root: Path, args: dict, *, references: bool = False) -> dict:
                                                    for i in range(start, end_line))
                     entry["content_has_more"] = end_line < owner.end_point.row + 1
                 matches.append(entry)
+    omitted = 0
+    match_mode = "exact" if references else args.get("match", "auto")
+    if not references and match_mode != "contains" and query:
+        exact = [entry for entry in matches if entry["name"] == query]
+        if exact or match_mode == "exact":
+            omitted, matches, match_mode = len(matches) - len(exact), exact, "exact"
+        else:
+            match_mode = "contains"
+    elif match_mode == "auto":
+        match_mode = "contains"
     limit = args.get("max_results", 20)
+    selected = matches[:limit]
+    visible_paths = {entry["path"] for entry in selected}
+    base = local_path(root, args.get("path", "."))
+    if base.is_file():
+        visible_paths.add(base.relative_to(root).as_posix())
+    detailed = args.get("include_diagnostics", False)
+    visible_diagnostics = diagnostics if detailed else [
+        entry for entry in diagnostics if entry["path"] in visible_paths
+    ]
     return {"language": "C", "resolution": "syntax_only_no_preprocessing",
             "scanned_files": scanned, "total_matches": len(matches),
-            "matches": matches[:limit], "truncated": len(matches) > limit,
-            "diagnostics": diagnostics[:20], "diagnostics_truncated": len(diagnostics) > 20}
+            "match_mode": match_mode, "omitted_partial_matches": omitted,
+            "matches": selected, "truncated": len(matches) > limit,
+            "files_with_parse_issues": sum(bool(d.get("has_parse_errors")) for d in diagnostics),
+            "unreadable_files": sum("error" in d for d in diagnostics),
+            "diagnostics_scope": "all" if detailed else "matched",
+            "diagnostics": visible_diagnostics[:20],
+            "diagnostics_truncated": len(visible_diagnostics) > 20}
 
 
 def symbol_tools(root: Path) -> list[FunctionTool]:
-    common = {"path": PATH, "max_results": {"type": "integer", "minimum": 1, "maximum": 100}}
+    common = {"path": PATH, "max_results": {"type": "integer", "minimum": 1, "maximum": 100},
+              "include_diagnostics": {"type": "boolean"}}
 
     async def find(args, context):
         return result(await asyncio.to_thread(inspect_source, root, args))
@@ -176,16 +206,18 @@ def symbol_tools(root: Path) -> list[FunctionTool]:
 
     return [
         FunctionTool("find_symbols", "定位C工程的函数定义/声明、宏与类型，返回签名和源码行号；"
-                     "query按名字包含匹配，空串列出目录；include_body附带最多40行原文。"
-                     "path可限定文件或目录。条件编译分支不裁剪，解析问题见diagnostics。",
+                     "默认完整名称精确匹配，未命中再包含匹配；match=contains可显式广搜。"
+                     "空query列目录，include_body附带最多40行原文，path可缩小范围。"
+                     "默认只附命中文件的诊断摘要；include_diagnostics展开扫描诊断。",
                      schema({**common, "query": {"type": "string"},
+                             "match": {"type": "string", "enum": ["auto", "exact", "contains"]},
                              "kind": {"type": "string",
                                       "enum": ["all", "function", "macro", "type"]},
                              "include_body": {"type": "boolean"}}), find,
                      execution_mode="parallel"),
         FunctionTool("find_symbol_references", "按C标识符精确名称找调用与引用，返回所属函数和原文。"
                      "这是语法候选：不区分跨文件同名符号、不解析指针目标、不展开宏；"
-                     "排除注释与字符串。path可限定目录或文件，必要时read_file核对。",
+                     "排除注释与字符串。path限定范围；include_diagnostics按需展开扫描诊断。",
                      schema({**common, "query": PATH,
                              "context_lines": {"type": "integer", "minimum": 0, "maximum": 5}},
                             ["query"]), references, execution_mode="parallel"),

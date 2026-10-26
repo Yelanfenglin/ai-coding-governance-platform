@@ -110,6 +110,53 @@ async def test_large_translation_unit_symbol_lookup(project):
     assert row["matches"][0]["name"] == "task_0"
 
 
+async def test_complete_name_prefers_exact_symbols_and_discovery_can_expand(project):
+    root, registry = project
+    (root / "wrappers.c").write_text(
+        "void MPU_shared(void) {}\nvoid shared_wrapper(void) {}\nvoid SHARED(void) {}\n",
+        encoding="utf-8",
+    )
+    exact = await invoke(registry, "find_symbols", query="shared", kind="function")
+    assert exact["match_mode"] == "exact"
+    assert exact["total_matches"] == 2 and exact["omitted_partial_matches"] == 3
+    assert {m["name"] for m in exact["matches"]} == {"shared"}
+    broad = await invoke(registry, "find_symbols", query="shared", match="contains")
+    assert broad["total_matches"] == 5 and broad["omitted_partial_matches"] == 0
+    discover = await invoke(registry, "find_symbols", query="shar")
+    assert discover["match_mode"] == "contains" and discover["total_matches"] == 5
+    missing = await invoke(registry, "find_symbols", query="shar", match="exact")
+    assert missing["total_matches"] == 0 and missing["match_mode"] == "exact"
+
+
+async def test_diagnostics_are_scoped_and_details_remain_available(project):
+    root, registry = project
+    (root / "unrelated.c").write_text("void incomplete( {", encoding="utf-8")
+    normal = await invoke(registry, "find_symbols", query="shared")
+    assert normal["diagnostics"] == [] and normal["files_with_parse_issues"] == 1
+    refs = await invoke(registry, "find_symbol_references", query="shared")
+    assert refs["diagnostics"] == [] and refs["files_with_parse_issues"] == 1
+    details = await invoke(registry, "find_symbols", query="shared", include_diagnostics=True)
+    assert details["diagnostics_scope"] == "all"
+    assert details["diagnostics"][0]["path"] == "unrelated.c"
+    assert details["diagnostics"][0]["parse_errors"]
+    direct = await invoke(registry, "find_symbols", query="absent", path="unrelated.c")
+    assert direct["diagnostics"] == [{"path": "unrelated.c", "has_parse_errors": True}]
+
+
+async def test_unrelated_wrappers_and_parse_errors_do_not_inflate_exact_query_payload(project):
+    root, registry = project
+    before = await invoke(registry, "find_symbols", query="shared", kind="function")
+    for i in range(20):
+        (root / f"port_{i}.c").write_text(
+            f"void MPU_shared_{i}(void) {{}}\nvoid broken_{i}( {{", encoding="utf-8",
+        )
+    after = await invoke(registry, "find_symbols", query="shared", kind="function")
+    assert after["matches"] == before["matches"]
+    assert after["diagnostics"] == before["diagnostics"] == []
+    assert after["omitted_partial_matches"] == after["files_with_parse_issues"] == 20
+    assert len(json.dumps(after)) - len(json.dumps(before)) < 100
+
+
 async def test_symbol_locations_flow_through_cli_into_targeted_read(project, monkeypatch):
     root, _ = project
 
