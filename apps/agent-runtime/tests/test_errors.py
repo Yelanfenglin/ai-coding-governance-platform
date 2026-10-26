@@ -83,9 +83,9 @@ def test_classification_uses_builtin_types_and_cancellation() -> None:
     assert classify_exception(ProviderError("nope", ErrorCode.AUTH)) == ErrorCode.AUTH
 
 
-def test_default_retryable_codes_match_dsh() -> None:
+def test_default_retryable_codes_include_incomplete_streams() -> None:
     assert frozenset(
-        {"EMPTY_RESPONSE", "RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT"}
+        {"EMPTY_RESPONSE", "RATE_LIMIT", "SERVER", "STREAM_CLOSED", "TIMEOUT", "TRANSPORT"}
     ) == DEFAULT_RETRYABLE_CODES
 
 
@@ -101,7 +101,7 @@ def test_default_retryable_codes_match_dsh() -> None:
         (ErrorCode.INVALID_REQUEST, False),
         (ErrorCode.QUOTA, False),
         (ErrorCode.CONTEXT_WINDOW_EXCEEDED, False),
-        (ErrorCode.STREAM_CLOSED, False),
+        (ErrorCode.STREAM_CLOSED, True),
         (ErrorCode.ABORTED, False),
     ],
 )

@@ -2,7 +2,7 @@
 
 规则对齐 DSH `packages/llm/llm-retry/src/index.ts`：
 只重试可重试错误、Retry-After 优先且超上限即放弃、等待可取消、重试计数按 step 重置、
-已有可见输出的流式请求不重试、工具不重复执行。
+已有正文输出的流式请求不重试、工具不重复执行。
 """
 
 from __future__ import annotations
@@ -361,11 +361,11 @@ def test_jitter_can_be_disabled() -> None:
     assert policy.local_delay(1, 1.0) == 1.0
 
 
-def test_default_retryable_codes_come_from_dsh() -> None:
+def test_default_retryable_codes_include_incomplete_streams() -> None:
     policy = RetryPolicy()
 
     assert policy.retryable_codes == frozenset(
-        {"EMPTY_RESPONSE", "RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT"}
+        {"EMPTY_RESPONSE", "RATE_LIMIT", "SERVER", "STREAM_CLOSED", "TIMEOUT", "TRANSPORT"}
     )
 
 

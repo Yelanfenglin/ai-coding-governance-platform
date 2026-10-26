@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from uuid import uuid4
@@ -14,7 +15,7 @@ import httpx
 import pytest
 
 from app import cli
-from app.contracts import AssistantTextDelta, ProviderRetryScheduled
+from app.contracts import AssistantReasoningDelta, AssistantTextDelta, ProviderRetryScheduled
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def model_server():
             data = json.dumps(payload)
             if status == 200:
                 data = f"data: {data}\n\n"
-                if not reply.get("truncate"):
+                if not reply.get("truncate") and not reply.get("no_done"):
                     data += "data: [DONE]\n\n"
             encoded = data.encode()
             self.send_response(status)
@@ -41,6 +42,12 @@ def model_server():
             for name, value in reply.get("headers", {}).items():
                 self.send_header(name, value)
             self.end_headers()
+            if reply.get("stall"):
+                if reply.get("send_before_stall"):
+                    self.wfile.write(encoded)
+                    self.wfile.flush()
+                time.sleep(reply["stall"])
+                return
             self.wfile.write(encoded)
 
         def log_message(self, *_):
@@ -56,6 +63,14 @@ def model_server():
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@pytest.fixture
+def short_model_timeout(monkeypatch):
+    from app.providers import openai_compatible
+
+    original = openai_compatible.httpx_stream_transport
+    monkeypatch.setattr(openai_compatible, "httpx_stream_transport", lambda: original(timeout=0.1))
 
 
 def completion(text="done", *, tool=None):
@@ -93,6 +108,38 @@ async def test_cli_recovers_from_a_transient_http_failure(model_server, tmp_path
     assert len(model_server.requests) == 2
     assert model_server.requests[0] == model_server.requests[1]
     assert len([e for e in events if isinstance(e, ProviderRetryScheduled)]) == 1
+
+
+@pytest.mark.parametrize(("reply", "expected_code"), [
+    ({"stall": 0.3}, "TIMEOUT"),
+    ({"payload": {}, "truncate": True}, "TRANSPORT"),
+    ({"payload": {}, "no_done": True}, "STREAM_CLOSED"),
+    (completion(""), "EMPTY_RESPONSE"),
+    ({"payload": {"choices": [{"delta": {"reasoning_content": "discarded reasoning"},
+                               "finish_reason": "stop"}]}}, "EMPTY_RESPONSE"),
+    ({"payload": {"choices": [{"delta": {"reasoning_content": "discarded reasoning"}}]},
+      "truncate": True, "stall": 0.3, "send_before_stall": True}, "TIMEOUT"),
+])
+async def test_cli_recovers_from_empty_or_interrupted_stream(
+    model_server, tmp_path, short_model_timeout, reply, expected_code,
+):
+    model_server.script.extend([reply, completion()])
+    events, responses = [], []
+    session = tmp_path / "session.jsonl"
+    code = await cli.run_once(
+        options(model_server, tmp_path, "--session", str(session)), console=False,
+        event_sink=events.append, result_sink=lambda response, _: responses.append(response),
+    )
+    assert code == cli.EXIT_OK
+    assert responses[0]["answer"] == "done"
+    assert len(model_server.requests) == 2
+    assert model_server.requests[0] == model_server.requests[1]
+    assert [e.code for e in events if isinstance(e, ProviderRetryScheduled)] == [expected_code]
+    assert "discarded reasoning" not in session.read_text(encoding="utf-8")
+    if "reasoning_content" in json.dumps(reply):
+        assert [e.text for e in events if isinstance(e, AssistantReasoningDelta)] == [
+            "discarded reasoning",
+        ]
 
 
 @pytest.mark.parametrize("status", [401, 402, 422])
@@ -138,7 +185,14 @@ async def test_cli_does_not_replay_a_partially_visible_http_stream(model_server,
     assert not any(isinstance(e, ProviderRetryScheduled) for e in events)
 
 
-async def test_cli_retry_does_not_repeat_an_executed_command(model_server, tmp_path):
+@pytest.mark.parametrize("fault", [
+    {"status": 503}, {"stall": 0.3}, {"payload": {}, "no_done": True},
+    {"payload": {"choices": [{"delta": {"reasoning_content": "discarded reasoning"}}]},
+     "truncate": True, "stall": 0.3, "send_before_stall": True},
+])
+async def test_cli_retry_does_not_repeat_an_executed_command(
+    model_server, tmp_path, short_model_timeout, fault,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     model_server.script.extend([
@@ -146,7 +200,7 @@ async def test_cli_retry_does_not_repeat_an_executed_command(model_server, tmp_p
             "from pathlib import Path; p=Path('effects.txt'); "
             "p.write_text(p.read_text()+'ran\\n' if p.exists() else 'ran\\n')"
         )]})),
-        {"status": 503}, completion(),
+        fault, completion(),
     ])
     code = await cli.run_once(options(model_server, tmp_path, "--workspace", str(workspace)),
                               console=False)

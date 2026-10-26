@@ -5,7 +5,7 @@
 - `packages/llm/llm/src/error.ts` —— `HarnessError(message, code, { cause })`：
   稳定的机器可路由 `code`，**路由只看 code，不解析 message**。
 - `packages/llm/llm/src/retry-policy.ts` —— 默认可重试集合
-  `EMPTY_RESPONSE / RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT`。
+  `EMPTY_RESPONSE / RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT`，并补充未完整结束的流。
 - `packages/llm/llm-deepseek/src/adapter.ts::httpErrorCode` —— HTTP 状态码到 code 的映射。
 - `packages/llm/llm-pi-ai/src/stream.ts::classifyPiAiError` —— 异常文本到 code 的映射。
 """
@@ -38,12 +38,13 @@ class ErrorCode(StrEnum):
     TRANSPORT = "TRANSPORT"
 
 
-#: DSH retry-policy.ts 的 DEFAULT_RETRYABLE_CODES。
+#: DSH defaults plus transient stream termination; visible text still prevents replay.
 DEFAULT_RETRYABLE_CODES = frozenset(
     {
         ErrorCode.EMPTY_RESPONSE,
         ErrorCode.RATE_LIMIT,
         ErrorCode.SERVER,
+        ErrorCode.STREAM_CLOSED,
         ErrorCode.TIMEOUT,
         ErrorCode.TRANSPORT,
     }

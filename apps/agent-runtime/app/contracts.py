@@ -365,7 +365,7 @@ class ProviderRetryScheduled:
 
 @dataclass(slots=True, frozen=True)
 class ProviderRetryStarted:
-    """等待结束，下一次 attempt 开始（DSH 的 `llm/retry-started`）。"""
+    """下一次 attempt 开始；调用方重置本 turn/step 的临时推理预览。"""
 
     turn: int
     step: int

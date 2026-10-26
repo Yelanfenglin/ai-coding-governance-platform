@@ -136,4 +136,40 @@ describe("Agent message rendering", () => {
     expect(rows[0]!.finished).toBe(true);
     expect(rows[0]!.events[0]!.type).toBe("ToolStarted");
   });
+
+  it("resets failed reasoning when its step retries and keeps earlier steps", () => {
+    const events: TaskEvent[] = [
+      {
+        sequence: 1,
+        type: "AssistantTurnEvent",
+        payload: {
+          turn: 1,
+          step: 1,
+          message: { reasoning_content: "previous step" },
+        },
+      },
+      {
+        sequence: 2,
+        type: "AssistantReasoningDelta",
+        payload: { turn: 1, step: 2, text: "failed preview" },
+      },
+      {
+        sequence: 3,
+        type: "ProviderRetryStarted",
+        payload: { turn: 1, step: 2, attempt: 2 },
+      },
+      {
+        sequence: 4,
+        type: "AssistantReasoningDelta",
+        payload: { turn: 1, step: 2, text: "new preview" },
+      },
+    ];
+    expect(traceSteps(events.slice(0, 3)).map((row) => row.reasoning)).toEqual([
+      "previous step",
+    ]);
+    expect(traceSteps(events).map((row) => row.reasoning)).toEqual([
+      "previous step",
+      "new preview",
+    ]);
+  });
 });

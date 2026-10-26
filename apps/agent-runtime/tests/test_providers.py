@@ -311,13 +311,14 @@ async def test_sse_without_done_is_stream_closed() -> None:
         await sse_chunks([sse({"choices": [{"delta": {"content": "dangling"}}]})])
 
     assert caught.value.code == ErrorCode.STREAM_CLOSED
-    assert caught.value.retryable is False
+    assert caught.value.retryable is True
 
 
-async def test_empty_completion_becomes_an_error_finish() -> None:
+@pytest.mark.parametrize("delta", [{}, {"content": ""}, {"reasoning_content": "think"}])
+async def test_empty_completion_becomes_an_error_finish(delta) -> None:
     """明确 stop 却一个 block 都没有 → terminal error finish（EMPTY_RESPONSE）。"""
     chunks = await sse_chunks(
-        [sse({"choices": [{"delta": {}, "finish_reason": "stop"}]}), "data: [DONE]\n\n"]
+        [sse({"choices": [{"delta": delta, "finish_reason": "stop"}]}), "data: [DONE]\n\n"]
     )
 
     finish = assemble(chunks).finish

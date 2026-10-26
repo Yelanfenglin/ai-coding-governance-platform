@@ -833,8 +833,8 @@ async def _request_assistant_turn(
     except BaseException as exc:
         # DSH agent.ts：已开始的 attempt 在取消时提交可见前缀，然后原样抛出。
         await attempt.commit_visible_prefix(options, messages, turn, step, only_if_cancelled=True)
-        if attempt.emitted and isinstance(exc, Exception):
-            # 已经有可见输出：重试会让调用方看到两份内容，标记为不可重试。
+        if attempt.text_emitted and isinstance(exc, Exception):
+            # 正文不能重复输出；仅推理的失败 attempt 可由 retry-started 重置预览。
             error = as_provider_error(exc)
             error.retryable = False
             raise error from exc
@@ -947,20 +947,19 @@ class _StreamAttempt:
 
     def __init__(self) -> None:
         self._assembler = BlockAssembler()
-        self._emitted = False
+        self._text_emitted = False
 
     @property
-    def emitted(self) -> bool:
-        """是否已经有可见输出（一旦有，就不再重试这次请求）。"""
-        return self._emitted
+    def text_emitted(self) -> bool:
+        """是否已经输出正文（一旦有，就不再重试这次请求）。"""
+        return self._text_emitted
 
     def apply(self, chunk: StreamChunk, options: RunOptions, turn: int, step: int) -> None:
         self._assembler.push(chunk)
         if isinstance(chunk, TextDelta):
-            self._emitted = True
+            self._text_emitted = True
             _emit(options, AssistantTextDelta(turn, step, chunk.text))
         elif isinstance(chunk, ReasoningDelta):
-            self._emitted = True
             _emit(options, AssistantReasoningDelta(turn, step, chunk.text))
 
     def turn(self) -> AssistantTurn:

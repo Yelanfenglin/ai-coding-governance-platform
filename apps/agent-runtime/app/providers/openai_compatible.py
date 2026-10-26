@@ -219,22 +219,30 @@ def httpx_stream_transport(timeout: float = 60.0) -> StreamTransport:
     async def transport(request: TransportRequest) -> AsyncIterator[str]:
         # Loopback services must not be sent through Windows/system HTTP proxies.
         trust_env = urlsplit(request.url).hostname not in {"127.0.0.1", "localhost", "::1"}
-        async with httpx.AsyncClient(timeout=timeout, trust_env=trust_env) as client, client.stream(
-            "POST", request.url, headers=request.headers, content=request.body
-        ) as response:
-            if response.status_code >= 400:
-                body = (await response.aread()).decode("utf-8", "replace")
-                raise TransportError(
-                    f"chat completion failed: {response.status_code} {body}",
-                    http_error_code(response.status_code, body),
-                    status_code=response.status_code,
-                    retry_after=retry_after_seconds(dict(response.headers)),
-                )
+        try:
+            async with (
+                httpx.AsyncClient(timeout=timeout, trust_env=trust_env) as client,
+                client.stream(
+                    "POST", request.url, headers=request.headers, content=request.body
+                ) as response,
+            ):
+                if response.status_code >= 400:
+                    body = (await response.aread()).decode("utf-8", "replace")
+                    raise TransportError(
+                        f"chat completion failed: {response.status_code} {body}",
+                        http_error_code(response.status_code, body),
+                        status_code=response.status_code,
+                        retry_after=retry_after_seconds(dict(response.headers)),
+                    )
 
-            # 归一化：`aiter_lines()` 去掉了行尾分隔符，这里补回 `\n`,
-            # 让 parser 只需要处理一种形状（文本块）。
-            async for line in response.aiter_lines():
-                yield f"{line}\n"
+                # aiter_lines() removes line endings; restore them for the SSE parser.
+                async for line in response.aiter_lines():
+                    yield f"{line}\n"
+        except httpx.TimeoutException as exc:
+            # httpx timeouts need not contain a message or inherit builtin TimeoutError.
+            raise TransportError(str(exc) or type(exc).__name__, ErrorCode.TIMEOUT) from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise TransportError(str(exc) or type(exc).__name__, ErrorCode.TRANSPORT) from exc
 
     return transport
 
@@ -392,9 +400,8 @@ class _SseTranslator:
 
     def _terminal_reason(self) -> FinishReason:
         reason = self.finish or FinishReason(kind="stop")
-        # DSH translate.ts：明确 stop 却一个 block 都没有 = 退化完成，映射成
-        # EMPTY_RESPONSE 的错误终止，而不是一个空的正常回答。
-        if reason.kind == "stop" and not self.order:
+        # Reasoning alone is not an answer; an empty content with tool calls is valid.
+        if reason.kind == "stop" and self.text_block is None and not self.tool_blocks:
             return FinishReason(
                 kind="error",
                 failure=LlmFailure(

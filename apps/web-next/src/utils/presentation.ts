@@ -41,6 +41,7 @@ export function traceSteps(events: TaskEvent[]): TraceStep[] {
     }
     if (event.type === "AssistantReasoningDelta")
       row.reasoning += String(event.payload.text ?? "");
+    if (event.type === "ProviderRetryStarted") row.reasoning = "";
     if (event.type === "AssistantTurnEvent") {
       const message = objectValue(event.payload.message);
       if (typeof message.reasoning_content === "string")
