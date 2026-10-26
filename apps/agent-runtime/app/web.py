@@ -31,6 +31,7 @@ from .circuit import from_env as circuit_from_env
 from .observability import configure
 from .reverification import recheck_delivery, recheck_summary
 from .skills import load_skills
+from .undo import undo_delivery, undo_summary
 
 API_PREFIX = "/api/agent"
 ACTIVE = {"pending", "running", "cancelling"}
@@ -98,7 +99,7 @@ class LocalAgent:
         self.root = self.state / "web"
         self.jobs: dict[str, WebTask] = {}
         self.active: WebTask | None = None
-        self.rechecking = False
+        self.maintaining = False
         for path in (self.root / "tasks").glob("*/task.json"):
             record = json.loads(path.read_text(encoding="utf-8"))
             events_path = path.parent / "events.jsonl"
@@ -273,7 +274,7 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
                         or job.record.get("skill") != body.skill):
                     raise HTTPException(409, "重复请求的内容不同")
                 return job.record
-        if agent.active is not None or agent.rechecking:
+        if agent.active is not None or agent.maintaining:
             raise HTTPException(409, "当前工程已有任务运行，请等待完成或先取消")
         catalog = load_skills()
         if body.skill is not None and body.skill not in catalog:
@@ -341,23 +342,42 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
         return {key: report.get(key) for key in (
             "changed_files", "commands", "evidence", "verification", "task_acceptance", "decisions",
         )} | {"diff": (path.parent / "changes.diff").read_text(encoding="utf-8", errors="replace"),
-              "recheck": recheck_summary(path, options.verification, agent.workspace)}
+              "recheck": recheck_summary(path, options.verification, agent.workspace),
+              "undo": undo_summary(path, agent.workspace)}
 
     @api.post("/tasks/{identifier}/recheck")
     async def recheck(identifier: UUID):
         job = agent.job(identifier)
-        if agent.active is not None or agent.rechecking:
-            raise HTTPException(409, "当前工程正在执行任务或复验，请等待完成")
+        if agent.active is not None or agent.maintaining:
+            raise HTTPException(409, "当前工程正在执行任务、复验或撤回，请等待完成")
         path = job.directory / "delivery" / "delivery.json"
         if not path.is_file():
             raise HTTPException(404, "本次任务尚无交付记录")
-        agent.rechecking = True
+        agent.maintaining = True
         try:
             return await recheck_delivery(path, options.verification, agent.workspace)
         except (OSError, ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
         finally:
-            agent.rechecking = False
+            agent.maintaining = False
+
+    @api.post("/tasks/{identifier}/undo")
+    async def undo(identifier: UUID):
+        job = agent.job(identifier)
+        if agent.active is not None or agent.maintaining:
+            raise HTTPException(409, "当前工程正在执行任务、复验或撤回，请等待完成")
+        path = job.directory / "delivery" / "delivery.json"
+        if not path.is_file():
+            raise HTTPException(404, "本次任务尚无交付记录")
+        agent.maintaining = True
+        try:
+            # No await between preflight and restoration: another Web task cannot
+            # enter this workspace while files are being restored.
+            return undo_delivery(path, agent.workspace)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        finally:
+            agent.maintaining = False
 
     app.include_router(api)
     if ui_directory is not None:

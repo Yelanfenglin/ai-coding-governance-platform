@@ -114,4 +114,55 @@ describe("local Agent task store", () => {
     expect(task.delivery).toBeNull();
     expect(task.recheckError).toBeNull();
   });
+
+  it("reloads undo history while preserving the original result", async () => {
+    const task = useTaskStore();
+    task.taskId = "task-1";
+    task.state = "completed";
+    task.result = { answer: "original answer" };
+    const delivery = { undo: { available: false, runs: [{ status: "completed" }] } };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(delivery)));
+    vi.stubGlobal("fetch", fetch);
+    await task.undo();
+    expect(fetch.mock.calls[0]![0]).toBe("/api/agent/tasks/task-1/undo");
+    expect(fetch.mock.calls[0]![1].method).toBe("POST");
+    expect(task.delivery).toEqual(delivery);
+    expect(task.result.answer).toBe("original answer");
+    expect(task.state).toBe("completed");
+    expect(task.undoingTaskId).toBeNull();
+  });
+
+  it("shows a conflict and refreshes undo availability", async () => {
+    const task = useTaskStore();
+    task.taskId = "task-1";
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "module.c 已改变" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ undo: { available: false } })));
+    vi.stubGlobal("fetch", fetch);
+    await task.undo();
+    expect(task.undoError).toBe("module.c 已改变");
+    expect(task.delivery!.undo!.available).toBe(false);
+  });
+
+  it("does not overlap undo with rechecks or update a different selected task", async () => {
+    const task = useTaskStore();
+    task.taskId = "old";
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changed_files: ["old.c"] })));
+    vi.stubGlobal("fetch", fetch);
+    const pending = task.undo();
+    await task.recheck();
+    await task.undo();
+    expect(fetch).toHaveBeenCalledOnce();
+    task.reset();
+    task.taskId = "new";
+    finish(new Response(JSON.stringify({ status: "completed" })));
+    await pending;
+    expect(task.delivery).toBeNull();
+    expect(task.undoError).toBeNull();
+  });
 });

@@ -133,6 +133,27 @@ test("real HTTP runtime: reasoning, files, RAG, delivery, continuation, cancella
   expect(await readFile(join(workspace, "generated.c"), "utf8")).toBe(
     "int value = 3;\n",
   );
+  await page.getByRole("button", { name: "工程审阅", exact: true }).click();
+  await page.getByRole("tab", { name: /改动/ }).click();
+  await page.getByRole("button", { name: "撤回本轮改动", exact: true }).click();
+  await page.getByRole("button", { name: "保留改动", exact: true }).click();
+  expect(await readFile(join(workspace, "generated.c"), "utf8")).toBe("int value = 3;\n");
+  const requestsBeforeUndo = await readFile(join(workspace, ".agent-runtime", "fixture-requests.jsonl"), "utf8");
+  await page.getByRole("button", { name: "撤回本轮改动", exact: true }).click();
+  await page.getByRole("button", { name: "确认撤回", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("本轮文件改动已撤回");
+  expect(await readFile(join(workspace, "generated.c"), "utf8")).toBe("int value = 2;\n");
+  expect(await readFile(join(workspace, ".agent-runtime", "fixture-requests.jsonl"), "utf8")).toBe(requestsBeforeUndo);
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成");
+  await expect(page.getByTestId("answer")).toContainText("将 value 改为 3");
+  await page.screenshot({ path: testInfo.outputPath("desktop-undo.png") });
+  await page.reload();
+  await expect(page.getByTestId("task-status")).toHaveText("执行完成");
+  await page.getByRole("button", { name: "工程审阅", exact: true }).click();
+  await page.getByRole("tab", { name: /改动/ }).click();
+  await expect(page.getByRole("status")).toContainText("本轮文件改动已撤回");
+  await expect(page.getByRole("button", { name: "撤回本轮改动", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "收起审阅面板" }).click();
   await page.locator(".history-trace > summary").first().click();
   await expect(page.locator(".history-trace .reasoning-block")).toHaveCount(5);
   await page

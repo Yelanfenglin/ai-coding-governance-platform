@@ -47,6 +47,18 @@ export interface Delivery {
   verification: { status: string };
   task_acceptance: string;
   decisions?: ImplementationDecision[] | null;
+  undo?: {
+    available: boolean;
+    reason: string | null;
+    runs: Array<{
+      id: string;
+      started_at: string;
+      status: string;
+      files: string[];
+      recovered?: boolean;
+      error?: string;
+    }>;
+  };
   recheck?: {
     available: boolean;
     reason: string | null;
@@ -120,6 +132,8 @@ export const useTaskStore = defineStore("task", {
     delivery: null as Delivery | null,
     recheckingTaskId: null as string | null,
     recheckError: null as string | null,
+    undoingTaskId: null as string | null,
+    undoError: null as string | null,
   }),
   getters: {
     active: (state) =>
@@ -154,6 +168,7 @@ export const useTaskStore = defineStore("task", {
       this.result = null;
       this.delivery = null;
       this.recheckError = null;
+      this.undoError = null;
     },
     async create(conversationId: string, prompt: string, skill: string | null = null) {
       const record = await apiRequest<TaskRecord>("/tasks", {
@@ -220,7 +235,7 @@ export const useTaskStore = defineStore("task", {
     },
     async recheck() {
       const identifier = this.taskId;
-      if (!identifier || this.active || this.recheckingTaskId) return;
+      if (!identifier || this.active || this.recheckingTaskId || this.undoingTaskId) return;
       this.recheckingTaskId = identifier;
       this.recheckError = null;
       try {
@@ -231,6 +246,21 @@ export const useTaskStore = defineStore("task", {
           this.recheckError = reason instanceof Error ? reason.message : "复验失败";
       } finally {
         this.recheckingTaskId = null;
+      }
+    },
+    async undo() {
+      const identifier = this.taskId;
+      if (!identifier || this.active || this.recheckingTaskId || this.undoingTaskId) return;
+      this.undoingTaskId = identifier;
+      this.undoError = null;
+      try {
+        await apiRequest(`/tasks/${identifier}/undo`, { method: "POST" });
+      } catch (reason) {
+        if (this.taskId === identifier)
+          this.undoError = reason instanceof Error ? reason.message : "撤回失败";
+      } finally {
+        await this.loadDelivery(identifier);
+        this.undoingTaskId = null;
       }
     },
     disconnect() {

@@ -120,6 +120,14 @@ class DeliveryRecorder:
             "vendor_compile": "not_assessed", "hardware": "not_assessed",
         }
         self.directory.mkdir(parents=True, exist_ok=True)
+        # Keep exact bytes only for files this delivery changed, including deletions.
+        # Patches alone cannot reliably restore encodings, empty files or final newlines.
+        for name in changes:
+            if name in self.before:
+                backup = self.directory / "undo" / "before" / name
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_bytes(self.before[name])
+        report["undo"] = {"schema_version": 1} if self.workspace else None
         path = self.directory / "delivery.json"
         path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (self.directory / "changes.diff").write_bytes(patch)

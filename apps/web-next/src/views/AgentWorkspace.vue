@@ -64,6 +64,7 @@ const canSend = computed(
     !!prompt.value.trim() &&
     !task.active &&
     !task.recheckingTaskId &&
+    !task.undoingTaskId &&
     !submitting.value &&
     !loadingHistory.value,
 );
@@ -646,9 +647,13 @@ onBeforeUnmount(() => task.disconnect());
       :delivery="task.delivery"
       :result="task.result"
       :rechecking="task.recheckingTaskId === task.taskId && task.taskId !== null"
-      :recheck-disabled="task.active || task.recheckingTaskId !== null"
+      :recheck-disabled="task.active || task.recheckingTaskId !== null || task.undoingTaskId !== null"
       :recheck-error="task.recheckError"
+      :undoing="task.undoingTaskId === task.taskId && task.taskId !== null"
+      :undo-disabled="task.active || task.recheckingTaskId !== null || task.undoingTaskId !== null"
+      :undo-error="task.undoError"
       @recheck="task.recheck()"
+      @undo="task.undo()"
       @close="inspectorOpen = false"
     />
   </div>

@@ -18,11 +18,20 @@ const props = defineProps<{
   rechecking?: boolean;
   recheckDisabled?: boolean;
   recheckError?: string | null;
+  undoing?: boolean;
+  undoDisabled?: boolean;
+  undoError?: string | null;
 }>();
-defineEmits<{ close: []; recheck: [] }>();
+const emit = defineEmits<{ close: []; recheck: []; undo: [] }>();
 const tab = defineModel<string>("tab", { default: "changes" });
 const selectedFile = ref("");
 const selectedSource = ref("");
+const confirmingUndo = ref(false);
+function confirmUndo() {
+  confirmingUndo.value = false;
+  emit("undo");
+}
+watch(() => props.delivery, () => { confirmingUndo.value = false; });
 function openFile(path: string) {
   selectedFile.value = path;
   tab.value = "changes";
@@ -136,6 +145,34 @@ const command = (row: Record<string, unknown>) => {
           <div class="panel-section-title">
             本轮修改 <span>{{ delivery.changed_files.length }} 个文件</span>
           </div>
+          <section v-if="delivery.undo" class="undo-section" aria-label="撤回交付">
+            <p class="panel-description">可撤回本轮记录的文件改动，原任务与验收记录继续保留。</p>
+            <template v-if="delivery.undo.available">
+              <button
+                v-if="!confirmingUndo"
+                class="recheck-button"
+                :disabled="undoing || undoDisabled"
+                @click="confirmingUndo = true"
+              >{{ undoing ? "正在撤回…" : "撤回本轮改动" }}</button>
+              <div v-else class="undo-confirmation" role="group" aria-label="确认撤回">
+                <p>将恢复或移除本轮 {{ delivery.changed_files.length }} 个文件。若文件在交付后又被修改，整轮撤回会停止。</p>
+                <button class="recheck-button" :disabled="undoing || undoDisabled" @click="confirmUndo">确认撤回</button>
+                <button class="recheck-button" :disabled="undoing" @click="confirmingUndo = false">保留改动</button>
+              </div>
+            </template>
+            <p v-else class="panel-description" role="status">{{ delivery.undo.reason }}</p>
+            <p v-if="undoError" role="alert">{{ undoError }}</p>
+            <details v-for="run in delivery.undo.runs" :key="run.id" class="check-run">
+              <summary>
+                <AppIcon :name="run.status === 'completed' ? 'check' : 'warning'" :size="15" />
+                {{ run.status === 'completed' ? "已撤回文件改动" : run.status === 'failed' ? "撤回失败" : "撤回未完整结束" }}
+                <span>{{ new Date(run.started_at).toLocaleString() }}</span>
+              </summary>
+              <p v-if="run.error">{{ run.error }}</p>
+              <p v-if="run.recovered">已恢复至撤回前状态。</p>
+              <ul><li v-for="file in run.files" :key="file"><code>{{ file }}</code></li></ul>
+            </details>
+          </section>
           <div class="changed-files">
             <button
               v-for="file in delivery.changed_files"
@@ -306,6 +343,9 @@ const command = (row: Record<string, unknown>) => {
 
 <style scoped>
 .recheck-section { margin: 22px 0; }
+.undo-section { margin-bottom: 16px; }
+.undo-confirmation p { font-size: 13px; line-height: 1.6; }
+.undo-confirmation button + button { margin-left: 8px; }
 .recheck-button {
   border: 1px solid var(--border);
   border-radius: 5px;

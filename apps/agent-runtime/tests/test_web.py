@@ -398,3 +398,55 @@ async def test_http_recheck_is_exclusive_persistent_and_does_not_rerun_model(tmp
         assert delivery["task_acceptance"] == "failed"
         assert delivery["recheck"]["runs"][0]["passed"]
         assert delivery["recheck"]["runs"][0]["matches_current"]
+
+
+async def test_http_undo_keeps_original_records_survives_restart_and_checks_conflicts(
+    connected, monkeypatch,
+):
+    app, client, root = connected
+    (root / "module.c").write_bytes(b"int old = 1;\r\n")
+    provider = Provider([
+        tools(ToolCall("change", "write_file", {"path": "module.c", "content": "int new = 2;\n"}),
+              ToolCall("add", "write_file", {"path": "new.c", "content": "int added = 3;\n"})),
+        final(),
+    ])
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", lambda **_: provider)
+    identifier = await conversation(client)
+    created = await start(client, identifier)
+    record = await complete(app, created.json()["id"])
+    job = app.state.agent.jobs[record["id"]]
+    artifacts = {p: p.read_bytes() for p in (
+        job.directory / "task.json", job.directory / "events.jsonl",
+        job.directory / "delivery/delivery.json", job.directory / "delivery/changes.diff",
+    )}
+
+    def no_model(**_):
+        raise AssertionError("undo must not call a model")
+
+    monkeypatch.setattr(cli, "OpenAiCompatibleProvider", no_model)
+    endpoint = f"{API_PREFIX}/tasks/{record['id']}/undo"
+    # A file edited after delivery blocks the complete undo, including other files.
+    (root / "new.c").write_bytes(b"user changed new.c")
+    response = await client.post(endpoint)
+    assert response.status_code == 409 and "new.c" in response.json()["detail"]
+    assert (root / "module.c").read_bytes() == b"int new = 2;\n"
+    (root / "new.c").write_bytes(b"int added = 3;\n")
+    app.state.agent.maintaining = True
+    assert (await client.post(endpoint)).status_code == 409
+    assert (await client.post(f"{API_PREFIX}/tasks/{record['id']}/recheck")).status_code == 409
+    assert (await start(client, identifier, "new task")).status_code == 409
+    app.state.agent.maintaining = False
+    response = await client.post(endpoint)
+    assert response.status_code == 200 and response.json()["status"] == "completed"
+    assert (root / "module.c").read_bytes() == b"int old = 1;\r\n"
+    assert not (root / "new.c").exists()
+    assert all(p.read_bytes() == raw for p, raw in artifacts.items())
+    assert (await client.post(endpoint)).json() == response.json()
+
+    restarted = create_app(options(root))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted),
+                                 base_url="http://127.0.0.1") as reopened:
+        delivery = (await reopened.get(f"{API_PREFIX}/tasks/{record['id']}/delivery")).json()
+        assert not delivery["undo"]["available"]
+        assert delivery["undo"]["runs"][0]["status"] == "completed"
+        assert (await reopened.get(f"{API_PREFIX}/tasks/{record['id']}")).json() == record
