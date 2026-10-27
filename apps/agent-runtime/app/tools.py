@@ -10,18 +10,7 @@ from typing import Any
 
 from .contracts import Tool, ToolCall, ToolContext, ToolDefinition, ToolResult
 
-#: 本地在派发前**真正执行**的 JSON Schema 关键字。
-#:
-#: 对齐 DSH `tools/schema.ts` / `json-schema.ts` 的部分：`defineTool` 在调用 handler 之前
-#: 校验支持的 schema，而不是「把 schema 发给模型就等于参数已校验」；而且上游对**不支持
-#: 或位置不对**的关键字是拒绝（`assertSupportedJsonSchema`），不是忽略。
-#:
-#: 范围上有一点必须说清楚：`minimum` / `maximum` / `exclusive*` / `minLength` / `maxLength` /
-#: `pattern` / `minItems` / `maxItems` 是**本地扩展** —— 上游的子集只到 type/oneOf/
-#: properties/required/additionalProperties/items/enum/const，没有断言类数值与字符串约束。
-#: 这些扩展按 JSON Schema 语义实现，正确性由本项目自己的用例保证，不能挂在「对齐 DSH」名下。
-#:
-#: 不在此列的关键字（`oneOf` / `$ref` / 元组式 `items` …）会在派发前被拒绝，见 `_check_supported`。
+#: 派发前执行的 JSON Schema 关键字；不支持的关键字由 _check_supported 拒绝。
 VALIDATION_KEYWORDS: frozenset[str] = frozenset(
     {
         "type",
@@ -43,7 +32,7 @@ VALIDATION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-#: 纯注解关键字：不影响校验结果（上游同样把它们当 annotation，忽略但不报错）。
+#: 纯注解关键字，不参与参数值校验。
 ANNOTATION_KEYWORDS: frozenset[str] = frozenset(
     {"title", "description", "default", "examples", "$comment", "$schema", "$id"}
 )
@@ -119,13 +108,9 @@ class ToolRegistry:
 
 
 def validate_arguments(input_schema: Any, args: Any) -> str | None:
-    """派发前校验参数值；返回错误描述，None 表示通过。
+    """在派发前检查 schema 与参数；通过时返回 None，否则返回错误描述。
 
-    DSH `parseArguments` 在 JSON 解析失败时保留原始文本，工具层因此可能拿到字符串 ——
-    这里同样把它当成普通入参错误返回，而不是让 run 崩掉。
-
-    先检查 schema 本身是否落在支持集内：**声明了却不执行的约束不能算校验过**，
-    所以「不支持的关键字」「无效的 pattern」都在这里明确拒绝，而不是静默放过。
+    非法 JSON 原文作为入参错误处理；不支持的关键字或无效约束直接返回错误。
     """
     if not isinstance(args, dict):
         return f"tool arguments are not a JSON object: {args!r}"
@@ -152,11 +137,7 @@ def _is_number(value: Any) -> bool:
 
 
 def _is_integer(value: Any) -> bool:
-    """JSON integer = **数值**没有小数部分（上游用 `Number.isInteger`）。
-
-    所以 `1.0` 是 integer、`1.5` 不是、`True` 也不是 —— 按 Python 对象类型判
-    （`isinstance(value, int)`）会把 `1.0` 误拒，与上游语义不同。
-    """
+    """按数值是否含小数部分判断 JSON integer，接受 1.0 并排除布尔值。"""
     if isinstance(value, bool):
         return False
     if isinstance(value, int):
@@ -201,14 +182,9 @@ def _render(value: Any) -> str:
 
 
 def _check_supported(schema: Any, path: str) -> str | None:
-    """检查 schema 是否落在**本实现真正执行**的子集内；返回错误描述，None 表示可以校验。
+    """检查 schema 支持集和约束格式，通过时返回 None。
 
-    上游 `assertSupportedJsonSchema` 对不支持/位置不对的关键字是拒绝而不是忽略。
-    这里做同一件事：允许集 = `VALIDATION_KEYWORDS`（真执行）+ `ANNOTATION_KEYWORDS`（纯注解）。
-    拒绝的理由是「声明了却没执行」比「拒绝了」更危险 —— 调用方会以为参数已经被约束过。
-
-    另外把「约束本身无效」也在这里挡住（`pattern` 编译不过、`type` 写了未知名字、
-    `enum`/`const` 用了非标量），否则校验器只能二选一：静默取消这项约束，或者假装通过。
+    执行校验关键字，忽略纯注解；拒绝未知关键字、无效正则和非法约束值。
     """
     if not isinstance(schema, dict):
         return f"invalid tool schema: {path} must be a JSON object (got {_render(schema)})"
@@ -307,8 +283,7 @@ def _validate(value: Any, schema: Any, path: str) -> str | None:
         return None
 
     if "const" in schema and not _same_json_value(value, schema["const"]):
-        # 与 enum 一样按 JSON 值语义比较：Python 的 `True == 1` 在 JSON 里不成立，
-        # 直接用 `!=` 会让 `const: 1` 接受 `true`（上游用 `!==`，严格比较）。
+        # 按 JSON 值语义比较，区分布尔值与数值，避免 True == 1 被当作相同值。
         return (
             f"invalid argument: {path} must equal {_render(schema['const'])}"
             f" (got {_render(value)})"

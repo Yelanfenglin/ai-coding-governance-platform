@@ -1,21 +1,7 @@
-"""会话回溯（Hermes 的第三层：`session_search`）。
+"""使用 SQLite FTS5 回溯历史会话。
 
-历史会话不塞进长期记忆（记忆是有界的），而是单独建 SQLite FTS5 索引，
-需要时按关键词把**原始消息**捞回来。不是向量检索。
-
-参照 Hermes `hermes_state_fts.py:40-65` + `hermes_state_search.py:1063` +
-`session_search_tool.py:238-251`：
-
-- 进索引的不只是 `content`：`tool_name` / `tool_calls` 同样建索引列。只索引正文会
-  让「哪个工具、什么参数、哪次调用」里的领域事实查不回来 —— 工具调用只有参数，
-  正文是空的。
-- 工具调用消息（assistant 无正文）不能被跳过：上游明确保留 `content` 为空的行。
-- 返回结果带上工具关联字段（工具名、参数、call id），否则拿回一条「ok」也无法
-  判断它是哪次调用的结果。
-- 排序用 FTS5 的 `ORDER BY rank`（上游默认），不是按插入顺序取前 N 条。
-
-FTS5 的 unicode61 对中文按整词切分，「通道」匹配不到「通道选择位」，
-所以 FTS 零命中时用 LIKE 兜底；兜底同样覆盖工具字段。
+索引正文、工具名和调用参数，保留无正文的工具调用消息。
+结果按相关性排序，并携带调用标识以关联原始工具结果；零命中时使用 LIKE 补查。
 """
 
 from __future__ import annotations
@@ -111,11 +97,7 @@ class _Row:
 
 
 def render_tool_calls(calls: Any) -> str:
-    """把工具调用压成可检索文本：名称、参数、call id 一个都不丢。
-
-    `arguments` 在协议里可能是原始 JSON 字符串（解析失败时 DSH 保留原文），
-    两种形态都要按原样写入，而不是重新序列化成 `{}`。
-    """
+    """将工具名、原始参数和调用标识转成可检索文本。"""
     if not isinstance(calls, list):
         return ""
     parts: list[str] = []

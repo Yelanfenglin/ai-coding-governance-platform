@@ -1,10 +1,6 @@
-"""OpenAI-compatible chat completions provider（可选）。
+"""通过可注入的流式传输调用 OpenAI-compatible Chat Completions 接口。
 
-默认 transport 用 httpx，但 httpx 是 optional 依赖且延迟导入；
-测试通过注入 transport 完成，不访问真实网络。
-
-HTTP 状态码与异常一律转成 `app.errors.ProviderError`，code 沿用 DSH 的错误码
-（`app/errors.py` 里 `http_error_code` / `classify_exception`）。
+默认延迟加载 httpx，将 HTTP 状态与传输异常归类为 ProviderError。
 """
 
 from __future__ import annotations
@@ -71,10 +67,7 @@ class TransportRequest:
     cancelled: Callable[[], bool] | None = None
 
 
-#: 唯一的 transport 形状：逐块产出 SSE 原始文本（通常按行）。
-#:
-#: **没有非流式 transport。** DSH `LlmAdapter.stream()` 是 "the only required
-#: method"，adapter 只发流式请求；本地不再保留「拉完整 body 再解析」的第二条传输路径。
+#: 流式传输逐块产出 SSE 原始文本。
 StreamTransport = Callable[[TransportRequest], AsyncIterator[str]]
 
 
@@ -100,8 +93,7 @@ class OpenAiCompatibleProvider:
         self._stream_transport = stream_transport
 
     async def generate_stream(self, request: ModelRequest) -> AsyncIterator[StreamChunk]:
-        # A stream is resumed/closed by different __anext__ tasks. Never keep an
-        # attached context across yield (OpenHands RootSpan/use_span pattern).
+        # 每次恢复流读取时附加追踪上下文，yield 前分离，避免跨任务持有上下文。
         attributes = {
             "openinference.span.kind": "LLM", "llm.model_name": self.model,
             "gen_ai.request.model": self.model,
@@ -260,12 +252,12 @@ class _OpenBlock:
 
 
 def _accept_identity(current: str | None, incoming: object) -> str | None:
-    """DSH `acceptIdentity`：非空字符串才覆盖，否则保留已有值。"""
+    """收到非空标识时更新当前值，否则保留原值。"""
     return incoming if isinstance(incoming, str) and incoming else current
 
 
 def _close_block(block: _OpenBlock) -> ContentBlock:
-    """DSH `closeBlock`：按 kind 产出最终 block。"""
+    """按块类别产出最终消息块。"""
     if block.kind == "text":
         return TextBlock(text=block.text)
     if block.kind == "reasoning":
@@ -276,12 +268,10 @@ def _close_block(block: _OpenBlock) -> ContentBlock:
 
 
 class _SseTranslator:
-    """把 SSE payload 翻成 `StreamChunk`（DSH `translate.ts`）。
+    """将 SSE payload 转换为 StreamChunk。
 
-    - reasoning 先于 content，同一 delta 内的顺序是固定的；
-    - 空字符串**不**开块；
-    - text / reasoning 各自全局唯一一个 block，tool-call 按上游 `index` 复用；
-    - 所有 `block-end` 延迟到 `[DONE]`。
+    同一增量中先处理推理再处理正文，空字符串跳过建块。
+    文本与推理各用一个块，工具调用按 index 复用，块结束事件统一在 DONE 时发出。
     """
 
     def __init__(self) -> None:
@@ -466,17 +456,10 @@ async def chunks_from_sse(
     chunks: AsyncIterator[str],
     cancelled: Callable[[], bool] | None = None,
 ) -> AsyncIterator[StreamChunk]:
-    """把 SSE 文本翻译成 `StreamChunk`（DSH `translate.ts::translate`）。
+    """将 SSE 文本转换为消息流，并在 DONE 后依次发出块结束、用量和终止事件。
 
-    `block-end`、`usage`、`finish` 都延迟到 `[DONE]`：finish_reason 之后可能还有独立
-    的 usage-only trailer 块，提前收尾会丢掉它。流结束却没有 `[DONE]` 时抛
-    `STREAM_CLOSED`（DSH `sse.ts` 的 "SSE stream ended without [DONE]"）。
-
-    没有 `finish_reason` **不是**错误：DSH 是 `pendingFinish ?? {kind: 'stop'}`。
-
-    退出时（正常结束、`[DONE]` 后 break、取消、异常）都要把**上游 transport** 关掉：
-    只关自己时，真实 HTTP 响应会一直挂到 GC 才释放，表现为
-    `aclose(): asynchronous generator is already running`。
+    保留 finish_reason 后的用量块，缺少终止原因时使用 stop。
+    流耗尽但缺少 DONE 时报告 STREAM_CLOSED；结束、取消或异常均关闭传输。
     """
     translator = _SseTranslator()
     saw_done = False
@@ -524,7 +507,7 @@ async def _aclose_stream(stream: Any) -> None:
 
 
 def _map_finish_reason(reason: str) -> FinishReason:
-    """DSH `mapFinishReason`：未知原因归入 error，不能当成正常 stop。"""
+    """映射终止原因，将未知原因归入 error。"""
     if reason == "stop":
         return FinishReason(kind="stop")
     if reason == "tool_calls":
@@ -561,8 +544,7 @@ def _parse_usage(raw: Any) -> Usage | None:
 
 def to_wire_message(message: Message) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
-    # DSH llm-deepseek/serialize.ts::serializeAssistant: replay reasoning verbatim,
-    # including assistant turns without tool calls; never merge it into content.
+    # 原样重放 assistant 的 reasoning 字段，与用户可见 content 分开序列化。
     if message.role == "assistant" and message.reasoning_content:
         payload["reasoning_content"] = message.reasoning_content
     if message.tool_calls:

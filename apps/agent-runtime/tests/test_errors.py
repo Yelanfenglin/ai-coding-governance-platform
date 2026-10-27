@@ -1,10 +1,4 @@
-"""Phase A：错误分类。
-
-错误码与可重试集合对齐 DSH：
-`packages/llm/llm/src/error.ts`、`packages/llm/llm/src/retry-policy.ts`、
-`packages/llm/llm-deepseek/src/adapter.ts::httpErrorCode`、
-`packages/llm/llm-pi-ai/src/stream.ts::classifyPiAiError`。
-"""
+"""验证 HTTP 状态与异常分类，以及可重试错误集合。"""
 
 from __future__ import annotations
 

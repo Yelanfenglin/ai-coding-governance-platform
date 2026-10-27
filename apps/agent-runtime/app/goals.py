@@ -1,9 +1,4 @@
-"""DSH goal/src/{fold,index}.ts, aa8262ec: same-session goal state.
-
-Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
-The Python host awaits its session sink; state changes commit only after append.
-Cordis/RPC/UI integration is not part of this single-agent CLI adapter.
-"""
+"""管理同一会话的目标状态；日志追加完成后再提交状态变更。"""
 
 from __future__ import annotations
 
@@ -173,7 +168,7 @@ class GoalFold:
 
 
 class GoalService:
-    """DSH GoalService lifecycle and CAS; JSONL is the owning durable source."""
+    """维护目标生命周期与版本比较更新，以 JSONL 日志持久化。"""
 
     def __init__(self, session: SessionSink | None = None, *, default_max_goal_rounds: int = 256):
         self.session = session

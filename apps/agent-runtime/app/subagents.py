@@ -1,8 +1,7 @@
-"""DSH aa8262e spawn/fork, foreground collection and continuable-child adaptation.
+"""管理子任务创建、会话分叉、结果等待和后续续跑。
 
-Uses run_agent, Inbox and session logs. Mode selection in one tool, bounded
-waits and parent step reservation are local adaptations. The host must close
-this manager before its event loop exits; it is not a daemon.
+复用运行循环、输入队列和会话日志，并为父任务预留步骤预算。
+宿主在事件循环退出前关闭管理器并回收子任务。
 """
 
 from __future__ import annotations
@@ -254,7 +253,7 @@ class SubagentRunner:
                         encoding="utf-8")
 
     def _result(self, child: _Child) -> ToolResult:
-        # DSH returns output + identity; the whole audit record is not model input.
+        # 模型接收结果正文和子任务标识，完整审计记录另行保存。
         keys = ("agent_id", "parent_call_id", "status", "answer", "usage", "session",
                 "continuable", "error")
         result = {key: child.record.get(key) for key in keys}

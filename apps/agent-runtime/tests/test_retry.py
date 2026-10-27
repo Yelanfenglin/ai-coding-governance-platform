@@ -1,9 +1,4 @@
-"""Phase B：provider 级 retry。
-
-规则对齐 DSH `packages/llm/llm-retry/src/index.ts`：
-只重试可重试错误、Retry-After 优先且超上限即放弃、等待可取消、重试计数按 step 重置、
-已有正文输出的流式请求不重试、工具不重复执行。
-"""
+"""验证有限重试、Retry-After 上限、取消、计数重置和可见输出后的重放控制。"""
 
 from __future__ import annotations
 
@@ -129,7 +124,7 @@ async def test_retries_are_bounded_by_max_retries() -> None:
 
 
 async def test_unclassified_exception_is_classified_then_retried() -> None:
-    """RuntimeError 文本里的 429 会被分类成 RATE_LIMIT（DSH classifyPiAiError）。"""
+    """异常文本中的 429 归类为 RATE_LIMIT 并重试。"""
     provider = FlakyProvider(
         [RuntimeError("429 rate limit reached")], final_turn("done")
     )
@@ -167,7 +162,7 @@ async def test_provider_retry_after_wins_over_backoff() -> None:
 
 
 async def test_provider_retry_beyond_max_delay_is_not_retried() -> None:
-    """DSH：provider 要求的等待超过上限时放弃重试。"""
+    """服务端等待时间超过配置上限时结束重试。"""
     provider = FlakyProvider([rate_limited(retry_after=99.0)], final_turn("never"))
 
     result = await run_agent(
@@ -380,7 +375,7 @@ def test_should_retry_respects_retry_budget_code_and_override() -> None:
 
 
 def test_defaults_match_dsh_retry_policy() -> None:
-    """DSH retry-policy.ts：maxRetries=5、initialDelayMs=500、maxDelayMs=10000、jitterRatio=0.1。"""
+    """默认策略：重试 5 次、初始 0.5 秒、上限 10 秒、抖动比例 0.1。"""
     policy = RetryPolicy()
 
     assert policy.max_retries == 5

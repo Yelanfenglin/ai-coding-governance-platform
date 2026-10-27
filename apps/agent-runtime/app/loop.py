@@ -1,15 +1,7 @@
-"""turn / step 两层 loop。
+"""按 turn 和 step 两层组织模型与工具执行。
 
-外层是 turn：处理一批用户输入（v1 没有 steering / follow-up，所以只跑一个 turn）。
-内层是 step：一次 model request + 一组 tool calls。
-
-终止条件（与 DSH 一致，没有额外策略）：
-
-- 模型没有 tool call            -> completed
-- 工具结果 concludes_turn=True   -> completed
-- provider stop_reason="length" -> max_tokens
-- 取消                          -> aborted
-- provider 抛错 / stop_reason="error" -> error
+turn 处理用户输入及插话，step 执行一次模型请求与一组工具调用。
+根据模型、工具完成标记、长度、取消、错误及可选预算结束运行。
 """
 
 from __future__ import annotations
@@ -94,12 +86,7 @@ ABORTED_BEFORE_DISPATCH = "Error: tool call aborted before dispatch"
 #: 不能重跑工具来补日志：副作用已经可能发生过，重跑等于重复执行。
 ABORTED_IN_FLIGHT = "Error: tool call was cancelled before it returned a result"
 
-#: 取消时给「已经在飞的那一次结果写入」的收尾上限（秒）。
-#:
-#: DSH 的 `session.append` 是同步调用，提交不会把取消拖住；本地的 `SessionSink.append`
-#: 是异步的（必要适配点），所以「收完同一次写入再传播取消」必须有个上限 ——
-#: 否则 sink 卡住（网络盘、磁盘满、被锁的文件）时 `cancel()` 永不返回，
-#: 外层 `wait_for` 超时也就失效了。本地 JSONL 追加是毫秒级，1s 是 1000 倍余量。
+#: 取消时等待在途结果写入完成的最长时间，单位为秒。
 COMMIT_GRACE_SECONDS = 1.0
 
 #: `_await_or_cancel` 用来表示「流已结束」的内部哨兵。
@@ -131,17 +118,17 @@ class RunOptions:
     circuit: CircuitBreakers | None = None
     #: 本 provider 的依赖键（`model:{base_url}|{model}`）；熔断启用时必填。
     circuit_dependency: str | None = None
-    #: 并行工具池上限（DSH `maxParallelToolCalls`）。
+    #: 并行工具调用池上限。
     max_parallel_tool_calls: int = 10
     #: 运行中插话/追问的输入队列；None 表示不启用 steering。
     inbox: Inbox | None = None
-    #: 取消时是否丢弃队列（DSH `cancel({ keepInbox })` 的反向开关，默认丢弃）。
+    #: 取消时是否清空待处理输入队列，默认清空。
     clear_inbox_on_cancel: bool = True
     #: 上下文压缩策略；None 表示不压缩。
     compaction: CompactionPolicy | None = None
-    #: 长期事实库（Hermes 的 MEMORY.md 等价物）；None 表示不注入。
+    #: 项目事实库，None 表示跳过记忆注入。
     memory: JsonMemoryStore | None = None
-    #: 用户画像库（Hermes 的 USER.md 等价物）。
+    #: 用户画像库。
     user_profile: JsonMemoryStore | None = None
     #: 当前适用条件（如 `{"chip": ...}`）；与之冲突的记忆不召回。
     applies_to: dict[str, str] | None = None
@@ -157,7 +144,7 @@ class RunOptions:
     reserved_parent_steps: int = 0
     #: 续接时从会话恢复的测量锚点；旧日志没有该字段时重新估算完整请求。
     context_anchor: ContextUsageAnchor | None = None
-    #: DSH goal + goal-round-driver, optional for programmatic callers.
+    #: 可选目标状态与轮次调度器。
     goal_driver: GoalRoundDriver | None = None
 
 
@@ -207,9 +194,7 @@ async def _run_agent(options: RunOptions) -> AgentRunResult:
     turns = 0
     steps = 0
 
-    # DSH 的外层是「只要 Inbox 还有 pending 就再开一个 turn」：followup 落在 next-turn
-    # 队列里，当前 turn 结束后被下一个 turn 的 step 认领。
-    # 预算计时从 run 开始：跨 turn 累计，不能每个 turn 重新计时。
+    # 当前回合结束后继续处理 next-turn 输入；步骤与时间预算跨回合累计。
     started_at = options.run_control.started_at
     entry_ids: dict[int, str] = {}
     meter = ContextMeter(options.context_anchor)
@@ -223,8 +208,7 @@ async def _run_agent(options: RunOptions) -> AgentRunResult:
             # later human/goal inputs enter through the inbox and its source tag.
             options.goal_driver.note_input(options.messages[-1])
 
-        # Hermes：记忆是 frozen snapshot，每个 turn 重建一次；它是**请求上下文**，
-        # 不进入 messages / 会话历史，所以不会跨 run 残留失效的旧快照。
+        # 每个回合重建记忆快照，仅用于当次请求上下文。
         memory_block = await _build_memory_block(options, turns)
 
         try:
@@ -232,8 +216,7 @@ async def _run_agent(options: RunOptions) -> AgentRunResult:
                 options, messages, usage, turns, steps, entry_ids, memory_block, started_at, meter
             )
         except asyncio.CancelledError:
-            # 外层 task.cancel() 也要留下明确的运行边界（DSH agent.ts 的 finally 收尾）：
-            # 否则会话日志里这个 turn 永远「开着」，续接方无法区分「运行中」和「被中断」。
+            # 取消时写入回合结束事件，保留可重放的运行边界。
             _emit(options, TurnFinished(turns, "aborted"))
             with contextlib.suppress(BaseException):
                 await _append(options, TurnEndEntry(turns, "aborted", _now()))
@@ -277,11 +260,9 @@ async def _run_agent(options: RunOptions) -> AgentRunResult:
 
 
 async def _build_memory_block(options: RunOptions, turn: int) -> Message | None:
-    """构建本 turn 的记忆快照（Hermes 的 frozen snapshot）。
+    """为本回合构建固定记忆快照，并在组装请求时插入 system 之后。
 
-    只在组装请求上下文时插入（system prompt 之后），**不写进 messages**，因此不会
-    作为历史传给下一次 `run_agent`，也不会让失效的旧快照继续出现。
-    没有命中任何条目时返回 `None` —— 不污染上下文。
+    快照独立于会话历史；没有匹配条目时返回 None。
     """
     stores = [store for store in (options.memory, options.user_profile) if store is not None]
     if not stores:
@@ -321,7 +302,7 @@ def _budget_reason(options: RunOptions, local_steps: int, started_at: float) -> 
 
 def _budget_message(options: RunOptions, used_steps: int, started_at: float,
                     local_steps: int = 0) -> Message | None:
-    """Local Budget visibility; DSH-inspired runtime context, not an upstream budget policy."""
+    """将剩余步骤与时间预算提供给模型上下文。"""
     budget = options.budget
     if budget is None and options.local_max_steps is None:
         return None
@@ -416,13 +397,12 @@ async def _run_steps(
         if reason is not None:
             return _StepOutcome("budget_exceeded", steps, reason)
 
-        # DSH：每个 turn 的第一步认领 next-turn，之后的 step 只认领 next-step。
+        # 回合首步认领 next-turn，后续步骤只认领 next-step。
         target = "next-turn" if steps == start_step else "next-step"
         if not await _claim_inbox(options, messages, turn, steps + 1, target, entry_ids):
             return _StepOutcome("completed", steps)
 
-        # DSH：压缩挂在 step 边界（agent/pre-step），不在请求中途做。
-        # 摘要请求也接进取消链路，所以这里要处理它抛出的中断。
+        # 在步骤边界压缩上下文，并传播摘要请求的取消信号。
         try:
             await _maybe_compact(
                 options, messages, usage, turn, steps + 1, meter, entry_ids, memory_block,
@@ -448,11 +428,7 @@ async def _run_steps(
         _emit(options, StepStarted(turn, steps))
         await _append(options, StepStartEntry(turn, steps, _now()))
 
-        # 每个**已经开始**（step/start 已落盘）的 step 都要关一次 —— 与 DSH `agent.ts`
-        # 把 step/end 放在 finally 里一致。取消与异常都不能让它悬挂：否则日志里会出现
-        # 「step/start 有、step/end 没有」，`turn/end=aborted` 写得再对也不代表阶段闭合。
-        # 只在这里收尾一次，分支里不再各自调用；收尾本身失败时，只有在没有原始异常
-        # 在飞的情况下才让它传播（不能用收尾失败掩盖真正的原因）。
+        # 在 finally 中关闭已开始的 step；收尾异常让位于原始异常。
         failure: BaseException | None = None
         try:
             request = ModelRequest(
@@ -487,8 +463,7 @@ async def _run_steps(
             _emit(options, AssistantTurnEvent(turn, steps, turn_result.message))
 
             if turn_result.stop_reason == "aborted":
-                # 适配器把取消规范化成 terminal `aborted` finish（DSH `adapterFailureChunk`）。
-                # 消息已按可见前缀落盘，这里只需要结束 step，不执行工具、不请求模型。
+                # 取消已规范为 aborted；可见前缀持久化后直接结束 step。
                 return _StepOutcome("aborted", steps)
 
             if turn_result.stop_reason == "error":
@@ -501,7 +476,7 @@ async def _run_steps(
 
             tool_calls = turn_result.message.tool_calls
             if not tool_calls:
-                # DSH：turn 已经结束但还有 next-step 输入时，steering 继续占用同一个 turn。
+                # 存在待处理的 next-step 输入时，在当前回合继续处理插话。
                 if _has_pending_steering(options):
                     continue
                 return _StepOutcome("completed", steps)
@@ -533,7 +508,7 @@ async def _maybe_compact(
     memory_block: Message | None = None,
     budget_message: Message | None = None,
 ) -> None:
-    """step 边界上的上下文压缩（DSH 挂在 `agent/pre-step`）。失败就保持原上下文。"""
+    """在 step 边界检查并压缩上下文，失败时保持原上下文。"""
     policy = options.compaction
     if policy is None:
         return
@@ -554,8 +529,7 @@ async def _maybe_compact(
         usage.add(value)
         options.run_control.usage.add(value)
 
-    # DSH compactIfNeeded：默认一次 + 一次重试，每次替换后重新 measure。
-    # pre-step 未收敛会警告并继续 turn，不能冒充成功，也不能无限压缩。
+    # 压缩最多执行初次尝试和一次复查；每次替换后重新计量上下文。
     for _ in range(policy.compaction_retries + 1):
         outcome = await compact_context(
             messages, policy, context_tokens, cancelled=_cancel_probe(options),
@@ -605,7 +579,7 @@ async def _claim_inbox(
     target: str,
     entry_ids: dict[int, str],
 ) -> bool:
-    """在 step 边界取走 Inbox 输入并写入上下文（DSH `preStep` + `inbox.claim`）。"""
+    """在 step 边界认领待处理输入并写入上下文。"""
     inbox = options.inbox
     if inbox is None:
         return True
@@ -647,15 +621,9 @@ async def _request_with_retry(
     step: int,
     request: ModelRequest,
 ) -> AssistantTurn | None:
-    """请求一次模型输出，失败时按 `retry_policy` 重试。
+    """请求模型输出，并在当前 step 的有限预算内重试可恢复错误。
 
-    重试计数是 step 内的局部变量，每个 step 重新开始 —— 与 DSH 的 retry projection
-    在 `step/start` 时清空一致。
-
-    熔断在**每个物理请求发出之前**检查（首次 attempt 也检查），被拒绝时不发网络调用。
-    因此阈值同时也是单次重试序列内的截断点：默认阈值等于重试预算的物理请求数，
-    单条全新的请求不会被截断；若熔断已有存量失败（别的任务/子 Agent 攒下的），
-    这条请求可能第一次失败就撞上 open。
+    每次实际请求前检查熔断状态；被拒绝的调用直接返回错误。
     """
     ledger = _RetryLedger(options)
     try:
@@ -805,11 +773,9 @@ async def _request_assistant_turn(
     step: int,
     request: ModelRequest,
 ) -> AssistantTurn | None:
-    """请求一次模型输出（单次 attempt）。
+    """执行一次流式模型请求，同时等待数据和取消信号。
 
-    返回 `None` 表示被取消（可见前缀已按 DSH 的方式提交）。
-
-    等待下一块数据时**与取消信号并行等待**：卡住的流不必等下一块到达才发现取消。
+    被取消时提交可见前缀并返回 None。
     """
     iterator = options.provider.generate_stream(request).__aiter__()
     attempt = _StreamAttempt()
@@ -822,7 +788,7 @@ async def _request_assistant_turn(
                 return None
             if value is _STREAM_END:
                 break
-            # DSH 在每个 chunk push 之前 throwIfAborted：取消后到达的增量不落盘。
+            # 提交每块增量前检查取消信号。
             if _is_cancelled(options):
                 await attempt.commit_visible_prefix(options, messages, turn, step)
                 return None
@@ -831,7 +797,7 @@ async def _request_assistant_turn(
             if isinstance(value, StreamFinished):
                 return _turn_or_raise(attempt)
     except BaseException as exc:
-        # DSH agent.ts：已开始的 attempt 在取消时提交可见前缀，然后原样抛出。
+        # 取消时提交可见前缀，再传播原始取消异常。
         await attempt.commit_visible_prefix(options, messages, turn, step, only_if_cancelled=True)
         if attempt.text_emitted and isinstance(exc, Exception):
             # 正文不能重复输出；仅推理的失败 attempt 可由 retry-started 重置预览。
@@ -845,18 +811,12 @@ async def _request_assistant_turn(
         # （表现为 `aclose(): asynchronous generator is already running`）。
         await _close_iterator(iterator)
 
-    # 流耗尽但没有收尾事件 —— DSH 抛 LlmError(..., 'STREAM_CLOSED')。
+    # 流耗尽但缺少收尾事件时报告 STREAM_CLOSED。
     raise ProviderError("provider stream ended without a terminal event", ErrorCode.STREAM_CLOSED)
 
 
 def _turn_or_raise(attempt: _StreamAttempt) -> AssistantTurn:
-    """把 error / aborted 终止还原成异常。
-
-    DSH 的两段式：`LlmRuntime` 先把适配器异常规范成 terminal `finish` chunk
-    （`adapterFailureChunk`），消费方收尾时再把它还原成错误（`finishError`）。
-    这样做的好处是重试策略仍然按稳定 `code` 判断，例如 EMPTY_RESPONSE 可重试 ——
-    如果这里只返回一个 `stop_reason="error"` 的 turn，错误码就丢了，重试也无从判断。
-    """
+    """将 error 和 aborted 终止块还原为异常，保留稳定错误码供重试策略判断。"""
     reason = attempt.finish
     if reason.kind not in ("error", "aborted"):
         return attempt.turn()
@@ -926,7 +886,7 @@ async def _close_iterator(iterator: Any) -> None:
 
 
 async def _sleep_cancellable(delay: float, cancel_event: asyncio.Event | None) -> bool:
-    """等待退避；被取消立即返回 False（DSH `cancellableDelay`）。"""
+    """等待退避时间，被取消时立即返回 False。"""
     if cancel_event is None:
         await asyncio.sleep(delay)
         return True
@@ -938,11 +898,9 @@ async def _sleep_cancellable(delay: float, cancel_event: asyncio.Event | None) -
 
 
 class _StreamAttempt:
-    """一次流式 attempt 的组装状态（DSH `AssistantStreamAttempt` 的对应物）。
+    """维护单次流式请求的组装状态并转发增量事件。
 
-    组装交给 `BlockAssembler`（与上游同一个算法）：loop 只负责把 chunk 喂进去、
-    对增量转发 UI 事件，收尾时读 `turn()` 或（取消时）`interrupted_blocks()`。
-    tool call 的半成品不会出现在 blocks 里，所以不会留下没有结果的调用。
+    完成时读取组装结果，取消时提取文本与推理前缀。
     """
 
     def __init__(self) -> None:
@@ -978,12 +936,7 @@ class _StreamAttempt:
         *,
         only_if_cancelled: bool = False,
     ) -> None:
-        """提交已输出文本（DSH `interruptedBlocks` + `interrupted: true`）。
-
-        DSH 只在取消中断时把可见前缀写成 assistant message；普通错误中断只留
-        attempt 记录，不把半成品写成消息。`interrupted_blocks()` 已经丢掉 tool call
-        —— 中断发生在派发之前，保留它就得伪造一个结果。
-        """
+        """取消时持久化已输出的文本与推理前缀，并标记 interrupted。"""
         if only_if_cancelled and not _is_cancelled(options):
             return
         blocks = self._assembler.interrupted_blocks()
@@ -1010,14 +963,10 @@ async def _execute_tool_calls(
     step: int,
     tool_calls: list[ToolCall],
 ) -> AgentStatus | None:
-    """调度一组 tool calls（DSH `executeToolCalls`）。
+    """按模型顺序调度工具调用并提交结果。
 
-    按模型顺序扫描：连续 parallel-safe 的进入有界并发池，exclusive call 是屏障
-    （独占执行，前后都形成屏障）。结果一律按模型顺序写回。
-    返回 `None` 表示继续下一个 step。
-
-    DSH 的 ``concludesTurn`` 只标记本轮已完成，同一 step 里剩余的 call 仍会执行并
-    留下 result；不能因为第一个 call 标记完成就丢掉后面的结果。
+    连续 parallel-safe 调用进入有界并发池，exclusive 调用形成屏障。
+    完成标记在本 step 的全部结果写回后结束回合。
     """
     next_index = 0
     concluded = False
@@ -1045,10 +994,7 @@ async def _run_group(
     group: list[ToolCall],
     mode: str,
 ) -> tuple[int, bool, bool]:
-    """执行一个 exclusive 屏障或 parallel 池（DSH `runGroup`）。
-
-    返回 `(consumed, aborted, concluded)`。
-    """
+    """执行一个独占调用或并行调用池，返回已消费、取消和完成状态。"""
     slots: dict[int, ToolResult] = {}
     in_flight: dict[int, asyncio.Task[None]] = {}
     next_to_start = 0
@@ -1058,15 +1004,10 @@ async def _run_group(
     aborted = _is_cancelled(options)
 
     async def commit_slot(index: int, result: ToolResult) -> None:
-        """DSH `commitReady`：**结果提交完成后再推进槽位**。
+        """完成结果提交后再推进槽位。
 
-        本地 append 是异步的，所以那次写入放进独立任务并用 `shield` 保护：一次调用只
-        对应这一次写入，取消不会重做它、也不会再补 synthetic。父运行取消时先收完它
-        再传播取消。
-
-        等待有上限（`COMMIT_GRACE_SECONDS`）：sink 卡住时取消不能被无限期拖住。
-        超过上限就不再等 —— 结果已经进了上下文，槽位照常推进，不会重复提交；
-        这一次写入最终是否落盘归 SessionSink 的断尾恢复边界（S03，未移植）。
+        使用独立任务与 shield 保护单次写入，取消时等待至 COMMIT_GRACE_SECONDS。
+        超时后继续传播取消，避免重复提交同一结果。
         """
         call = group[index]
         message = _tool_result_message(call, result)
@@ -1096,7 +1037,7 @@ async def _run_group(
         settle()
 
     async def commit_ready() -> None:
-        """DSH：只有模型顺序上连续已完成的 slot 才提交。"""
+        """按模型顺序提交连续已完成的槽位。"""
         while committed in slots:
             await commit_slot(committed, slots.pop(committed))
 
@@ -1150,7 +1091,7 @@ async def _run_group(
             and next_to_start < len(group)
             and len(in_flight) < options.max_parallel_tool_calls
         ):
-            # DSH：派发前重新读模式；后面出现 exclusive 就停在这里，交给下一个屏障。
+            # 派发前重新读取并发模式，遇到独占调用则结束当前并行池。
             if (
                 next_to_start > 0
                 and mode == "parallel"
@@ -1177,9 +1118,7 @@ async def _run_group(
                 break
             await fill()
     except BaseException:
-        # 外层 `task.cancel()` / `wait_for` 超时也要收尾：执行器拥有并清理它启动的工作，
-        # 不能让工具子任务在父运行退出后继续跑（DSH tool-calls.ts 的 settle 保证）。
-        # 收拢之后必须**提交**：已完成的结果不能因为前面的调用被取消就消失。
+        # 父运行取消时回收已启动的工具任务，并提交已经完成的结果。
         await _abandon_group(in_flight)
         with contextlib.suppress(asyncio.CancelledError):
             await flush_dispatched()
@@ -1187,7 +1126,7 @@ async def _run_group(
         raise
 
     if aborted:
-        # DSH：已开始的调用先跑完并落盘，未派发的才补 synthetic 结果。
+        # 收齐并提交已启动的调用，为未派发的调用补写跳过结果。
         if in_flight:
             await asyncio.wait(in_flight.values())
         await flush_dispatched()
@@ -1222,7 +1161,7 @@ async def _write_skipped(
     step: int,
     calls: list[ToolCall],
 ) -> None:
-    """给未派发的 call 写 synthetic 结果（DSH `appendSkippedToolCall`）。"""
+    """为尚未派发的调用写入合成的跳过结果。"""
     for call in calls:
         await _record_tool_result(
             options,

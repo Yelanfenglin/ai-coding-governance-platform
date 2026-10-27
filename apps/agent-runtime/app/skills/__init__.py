@@ -1,10 +1,4 @@
-"""Discover skill metadata and load instructions on demand.
-
-Follows Pi's core/skills.ts loadSkillFromFile/formatSkillsForPrompt: expose
-name/description first, then let the model read the matching SKILL.md. This
-adapter uses a named read tool because workspace read_file cannot read package
-assets. Skill instructions do not add a separate execution loop.
-"""
+"""发现技能元数据，并通过专用读取工具按需加载 SKILL.md 指令。"""
 
 from __future__ import annotations
 
@@ -35,7 +29,7 @@ def load_skills(directory: Path = Path(__file__).parent) -> dict[str, dict]:
 
 
 def expand_skill(name: str | None, question: str, skills: dict[str, dict]) -> str:
-    """Pi AgentSession._expandSkillCommand: explicit selection expands before the model call."""
+    """在模型请求前展开显式选择的技能指令。"""
     if name is None:
         return question
     if name not in skills:

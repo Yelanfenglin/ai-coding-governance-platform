@@ -1,14 +1,4 @@
-"""provider 错误分类：给 retry 提供可路由的错误码。
-
-对齐 DSH：
-
-- `packages/llm/llm/src/error.ts` —— `HarnessError(message, code, { cause })`：
-  稳定的机器可路由 `code`，**路由只看 code，不解析 message**。
-- `packages/llm/llm/src/retry-policy.ts` —— 默认可重试集合
-  `EMPTY_RESPONSE / RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT`，并补充未完整结束的流。
-- `packages/llm/llm-deepseek/src/adapter.ts::httpErrorCode` —— HTTP 状态码到 code 的映射。
-- `packages/llm/llm-pi-ai/src/stream.ts::classifyPiAiError` —— 异常文本到 code 的映射。
-"""
+"""将 HTTP 状态与传输异常归类为稳定错误码，供重试策略判断。"""
 
 from __future__ import annotations
 
@@ -21,7 +11,7 @@ from enum import StrEnum
 
 
 class ErrorCode(StrEnum):
-    """DSH 的稳定错误码。HTTP_<status> 这类动态码不在枚举内，直接以字符串表示。"""
+    """稳定错误码；HTTP_<status> 等动态码直接使用字符串。"""
 
     ABORTED = "ABORTED"
     AUTH = "AUTH"
@@ -38,7 +28,7 @@ class ErrorCode(StrEnum):
     TRANSPORT = "TRANSPORT"
 
 
-#: DSH defaults plus transient stream termination; visible text still prevents replay.
+#: 可重试的模型与流错误；已输出正文时由调用方限制重放。
 DEFAULT_RETRYABLE_CODES = frozenset(
     {
         ErrorCode.EMPTY_RESPONSE,
@@ -101,17 +91,17 @@ _CONTEXT_PATTERNS = tuple(
 
 
 def is_quota_exceeded(detail: str) -> bool:
-    """识别「配额/余额耗尽」而不是瞬时限流（DSH `isQuotaExceededError`）。"""
+    """识别配额或余额耗尽。"""
     return any(pattern.search(detail) for pattern in _QUOTA_PATTERNS)
 
 
 def is_context_window_exceeded(detail: str) -> bool:
-    """识别「超出上下文窗口」（DSH `isContextWindowExceededError`）。"""
+    """识别上下文窗口超限。"""
     return any(pattern.search(detail) for pattern in _CONTEXT_PATTERNS)
 
 
 def http_error_code(status: int, detail: str = "") -> str:
-    """HTTP 状态码 → 错误码（DSH `httpErrorCode`）。"""
+    """将 HTTP 状态码映射为错误码。"""
     if status in (401, 403):
         return ErrorCode.AUTH
     if status == 413:
@@ -134,7 +124,7 @@ def http_error_code(status: int, detail: str = "") -> str:
 
 
 def classify_exception(error: BaseException) -> str:
-    """异常 → 错误码（DSH `classifyPiAiError` 的顺序与判定）。"""
+    """按异常类型和错误文本归类错误码。"""
     if isinstance(error, ProviderError):
         return error.code
     if isinstance(error, asyncio.CancelledError):
@@ -191,7 +181,7 @@ def has_code(error: BaseException, code: str | ErrorCode) -> bool:
 
 
 def retry_after_seconds(headers: Mapping[str, str]) -> float | None:
-    """解析 `Retry-After`（秒或 HTTP 日期），沿用 DSH adapter 的处理；单位换算成秒。"""
+    """解析秒数或 HTTP 日期形式的 Retry-After，返回等待秒数。"""
     for key, value in headers.items():
         if key.lower() != "retry-after":
             continue

@@ -1,12 +1,7 @@
-"""上下文压缩（Phase E）。
+"""在 step 边界按上下文压力压缩历史。
 
-参照 DSH `packages/compaction/compaction-basic`：
-
-- 触发阈值 `thresholdRatio=0.8`、保留尾部 `retainRatio=0.16`（DSH 默认）；
-- 只在 step 边界触发（DSH 挂在 `agent/pre-step`）；
-- 摘要结构沿用 DSH `summarizer.ts` 的八段；
-- **原始事件不删除**：重放结果 = 摘要 + 最近原文；
-- 压缩失败回退到未压缩上下文，不中断请求。
+默认触发比例为 0.8，原文保留比例为 0.16；摘要采用八段结构。
+原始事件持续保存，重放时组合摘要与最近原文；压缩失败时沿用原上下文。
 """
 
 from __future__ import annotations
@@ -32,10 +27,8 @@ from .contracts import (
 from .errors import ErrorCode, ProviderError, has_code
 from .observability import observed
 
-# --- checkpoint framing（DSH `summarizer.ts`）---------------------------------
-#
-# 上游把摘要落成一条 **user** 消息，用 tag 包裹，而不是替换 system prompt。
-# 摘要内容由模型产生，变成 system 会改变指令优先级 —— 这不是命名差异。
+# --- 摘要检查点包装 -------------------------------------------------------
+# 摘要以带标签的 user 消息写入，保留原 system 指令的优先级。
 
 SUMMARY_OPEN_TAG = "<compacted-summary>"
 SUMMARY_CLOSE_TAG = "</compacted-summary>"
@@ -53,10 +46,7 @@ _STREAM_DONE = object()
 #: 摘要请求与取消竞争时的轮询间隔（摘要器只拿到探针，拿不到 event）。
 _CANCEL_POLL_SECONDS = 0.01
 
-#: DSH `summarizer.ts::COMPACTION_INSTRUCTION`。
-#:
-#: 它作为区域之后**最后一条 user 消息**发出，不作为另一个 system prompt ——
-#: 前面的 system head / tools / 区域消息因此构成上次请求的真实前缀，prefix cache 可复用。
+#: 摘要指令放在区域消息之后，保留 system、tools 与记忆组成的请求前缀。
 COMPACTION_INSTRUCTION = "\n".join(
     [
         (
@@ -127,7 +117,7 @@ SUMMARY_SECTIONS: tuple[str, ...] = tuple(
 
 @dataclass(frozen=True)
 class CompactionPolicy:
-    """压缩策略。比例与默认值取自 DSH `compaction-basic/config.ts`。"""
+    """配置压缩触发比例、原文保留比例及摘要预算。"""
 
     context_window: int
     threshold_ratio: float = 0.8
@@ -160,10 +150,7 @@ class CompactionOutcome:
 
 
 def estimate_tokens(message: Message) -> int:
-    """DSH estimate.ts：字符/4 向上取整，加 role/block 开销；仍非精确分词。
-
-    Python 的 tool result 是单独的消息，补上本地 name/call-id 的结构字段。
-    """
+    """按字符数除以 4 向上取整，并计入角色、块及工具调用字段的结构开销。"""
     if message.role == "system":
         return math.ceil(len(message.content) / 4) + 4 if message.content else 0
     tokens = 4
@@ -199,7 +186,7 @@ def _tool_tokens(tools: list[ToolDefinition]) -> int:
 
 
 def _request_header(request: ModelRequest, provider: ModelProvider) -> str:
-    # DSH canonicalHeader 的本地适配：路由/模型/工具不同就不用旧 usage 校准。
+    # 路由、模型或工具变化时重新建立 usage 校准锚点。
     return json.dumps({
         "provider": type(provider).__qualname__,
         "base_url": getattr(provider, "base_url", None),
@@ -210,11 +197,7 @@ def _request_header(request: ModelRequest, provider: ModelProvider) -> str:
 
 @dataclass(slots=True)
 class ContextMeter:
-    """DSH TokenMeter.measure 的薄适配：用量锚点 + 有符号的消息表面变化。
-
-    锚点计入请求和生成结果；后续工具结果、用户输入以及压缩删除都形成增减量。
-    不能把 max(上次 input, 当前估算) 当作校准，也不能将估算当成硬窗口保证。
-    """
+    """结合实际请求用量锚点和后续上下文增减，估算当前 token 占用。"""
 
     anchor: ContextUsageAnchor | None = None
 
@@ -239,7 +222,7 @@ class ContextMeter:
 
 
 def leading_system_count(messages: list[Message]) -> int:
-    """DSH：system prompt 不参与压缩。"""
+    """统计前导 system 消息，作为压缩时保留的固定前缀。"""
     count = 0
     for message in messages:
         if message.role != "system":
@@ -249,16 +232,12 @@ def leading_system_count(messages: list[Message]) -> int:
 
 
 def is_compaction_summary(message: Message) -> bool:
-    """识别 checkpoint。
-
-    DSH 把 checkpoint 落成 **user** 消息并用 tag 包裹（`summarizer.ts::frameSummary`）。
-    它必须能被下一次压缩再次吸收，所以不能当成固定 system prompt。
-    """
+    """识别带摘要标签的 user 检查点，供后续压缩滚动合并。"""
     return message.role == "user" and SUMMARY_OPEN_TAG in message.content
 
 
 def frame_checkpoint(summary: str) -> str:
-    """DSH `frameSummary`：preamble + 开 tag + 摘要 + 闭 tag，落成一条 user 消息。"""
+    """用前导说明和摘要标签包装摘要，生成 user 检查点消息。"""
     return f"{CHECKPOINT_PREAMBLE}\n\n{SUMMARY_OPEN_TAG}{summary}{SUMMARY_CLOSE_TAG}"
 
 
@@ -294,18 +273,10 @@ def message_groups(messages: list[Message]) -> list[list[Message]]:
 def split_region(
     messages: list[Message], retain_tokens: int
 ) -> tuple[list[Message], list[Message]]:
-    """切出「要摘要的前段」和「保留的尾部原文」。
+    """切分待摘要区域与保留原文。
 
-    语义对齐 DSH `region.ts:132-146`：`retainTokens` 是**最少**保留量，不是上限 ——
-
-    1. 从尾向前累加，累计到 `>= retainTokens` 才停（允许最后一组超额）；
-    2. 再向前扩展直到工具配对平衡（上游的 `toolPairingBalancedBefore` 循环）。
-
-    本地 `message_groups()` 已经按「assistant call + 它的全部 result」成组，所以按组
-    移动天然满足第 2 步：切点永远落在组边界上。
-
-    与旧实现的差别：不再因为「下一组放不下」就停止保留。旧写法在最后一组超额时可以
-    一条原文都不留，那与上游「至少保留这么多原文」是反的。
+    从尾部按消息组累计至 retainTokens，允许最后一组超出预算。
+    工具调用与结果按组保留，使切点落在完整配对边界。
     """
     groups = message_groups(messages)
 
@@ -327,17 +298,10 @@ def summarization_messages(
     prefix: Sequence[Message] = (),
     flatten: bool = False,
 ) -> list[Message]:
-    """拼出摘要请求（DSH `region.ts:528-546` + `summarizer.ts:144-159`）。
+    """组合摘要请求：实际固定前缀、待压缩消息和末尾摘要指令。
 
-    上游的形状是：**实际请求的固定前缀 + 区域消息 + 末尾一条 `COMPACTION_INSTRUCTION`
-    的 user 消息**。不新增摘要专用 system prompt —— 这样辅助调用是上次请求的真实前缀，
-    provider 的 prefix cache 可复用，只有末尾指令是新增输入。
-
-    `prefix` 必须传**实际发出去的那几段固定前缀**：会话的 system head **以及本 turn
-    注入的 memory block**（`loop._context_messages` 的位置）。只取 system head 会在
-    开启记忆时让前缀与原请求不一致 —— 那等于没说前缀对齐。
-
-    `flatten=True` 只用于无法接受 tool 消息的 provider（文本兜底，仍然序列化工具信息）。
+    prefix 包含会话 system 与本回合记忆，保持请求前缀一致以复用缓存。
+    flatten 模式将工具信息序列化为文本，供不接受工具消息的适配器使用。
     """
     head = list(prefix)
     if flatten:
@@ -368,18 +332,10 @@ def render_transcript(messages: list[Message]) -> str:
 
 
 class ModelSummarizer:
-    """用同一个 provider 生成摘要（DSH `summarizer.ts::summarizeWithLlm`）。
+    """通过同一流式 provider 生成摘要。
 
-    DSH 把 `ctx.llm.stream()` 直接当摘要入口：replay 会话前缀（system prompt、
-    **tools**、前导消息），把压缩指令作为最后一条 user 消息 —— 这样辅助调用是上次
-    请求的真实前缀，provider 的前缀缓存可以复用，只有末尾指令是新增输入。
-
-    本地保持同一形状：走 `generate_stream`（不是另一条 `generate` 路径），tools 与
-    主请求一致，只把增量收进来拼成最终 `AssistantTurn`，不转发给调用方。
-
-    DSH 还把 agent signal 继续传给摘要模型；这里同样接收 `cancelled` 探针：既放进
-    `ModelRequest`（provider 适配器可在读取前放弃），也在等待时竞争取消，否则压缩
-    期间卡住的摘要请求会让整个 run 停不下来。
+    沿用主请求的固定前缀与工具定义，收集增量并组装摘要结果。
+    摘要请求接入运行取消信号，在等待读取期间也可中断。
     """
 
     def __init__(self, provider: ModelProvider, max_output_tokens: int = 8192) -> None:
@@ -434,9 +390,7 @@ class ModelSummarizer:
             self._stream_usage = assembler.usage
 
         reason = assembler.finish
-        # DSH `finishError`：error / aborted / max-tokens 都是失败终止，压缩要回退。
-        # max-tokens 单独处理，因为截断的 checkpoint 看起来「非空且更短」，会通过
-        # 后面两条验收 —— 但它丢了后半段事实，必须当成失败。
+        # error、aborted 或 max-tokens 终止均回退，避免采用截断的摘要。
         if reason.kind in ("error", "aborted", "max-tokens"):
             failure = reason.failure
             if reason.kind == "max-tokens":
@@ -449,7 +403,7 @@ class ModelSummarizer:
                 ErrorCode.ABORTED if reason.kind == "aborted" else ErrorCode.PROVIDER,
             )
         turn = assembler.turn()
-        # DSH: "summarization produced no text summary content"
+        # 空白摘要保留原上下文。
         if not turn.message.content.strip():
             raise ProviderError(
                 "summarization produced no text summary content", ErrorCode.PROVIDER
@@ -503,12 +457,7 @@ async def _call_summarizer(
     tools: list[ToolDefinition] | None = None,
     prefix: Sequence[Message] = (),
 ) -> str:
-    """调用摘要器。
-
-    DSH 的摘要请求带上会话的 tools 与实际请求前缀（system head + 注入的记忆块）。
-    支持这些关键字的实现（`ModelSummarizer`）会收到它们；只接受 `transcript` 的
-    自定义摘要器仍按位置参数调用。
-    """
+    """调用摘要器，并向支持相应参数的实现传入工具定义与实际请求前缀。"""
     kwargs: dict[str, object] = {}
     if cancelled is not None and _accepts_keyword(summarizer, "cancelled"):
         kwargs["cancelled"] = cancelled
@@ -567,19 +516,10 @@ async def compact_context(
     on_usage: Callable[[Usage], None] | None = None,
     on_failure: Callable[[str], None] | None = None,
 ) -> CompactionOutcome | None:
-    """未达阈值或压缩失败时返回 `None`（调用方保持原上下文）。
+    """将可压缩消息替换为非空且更短的 user 摘要检查点，并保留最近原文。
 
-    对应 DSH `region.ts::compactRegion` + `summarizer.ts`：
-
-    - 落地结果的固定前缀只有会话原本的 system head；
-    - **摘要请求的前缀**是实际请求前缀（`request_prefix` = system head + 本 turn 的
-      memory block），否则开启记忆时摘要调用并不是主请求的前缀；
-    - 旧 checkpoint 是**区域里的普通 user 消息**，因此随区域一起进入新摘要（滚动合并）；
-    - 摘要非空、且比被替换区域更短，否则整次压缩失败并保持原上下文；
-    - 落地的是 user checkpoint（带 `<compacted-summary>` framing），不是 system。
-
-    `cancelled` 让摘要请求也接进运行的取消链路（DSH 把 agent signal 传进摘要器）。
-    `on_usage` 在每次**实际发生**的摘要调用后收到一次 usage，与是否采用无关。
+    未达阈值或摘要无效时返回 None；旧检查点随区域滚动合并。
+    请求携带实际固定前缀与取消信号，每次实际摘要调用均回报 usage。
     """
     if context_tokens < policy.threshold_tokens:
         return None
@@ -591,7 +531,7 @@ async def compact_context(
     summarize_prefix = list(fixed_prefix if request_prefix is None else request_prefix)
 
     region, kept = split_region(messages[prefix_end:], policy.retain_tokens)
-    # 没有可压缩区域就不做（DSH keepFromIdx <= firstIdx）；旧 checkpoint 可以滚动压缩。
+    # 仅处理存在可压缩区域的上下文；旧检查点参与滚动合并。
     if not region:
         return None
 
@@ -611,7 +551,7 @@ async def compact_context(
     except Exception as error:
         if on_failure is not None:
             on_failure(str(error))
-        return None  # DSH：压缩失败回退到未压缩上下文，不中断请求
+        return None  # 压缩失败时沿用原上下文。
     finally:
         _report_summary_usage(policy.summarizer, on_usage)
 

@@ -1,8 +1,4 @@
-"""测试用 provider：按脚本依次返回 turns，并记录每次请求便于断言。
-
-唯一入口是 `generate_stream`（DSH `LlmAdapter.stream()` 是 the only required
-method）；脚本产出的是一条完整的 `StreamChunk` 流，收尾一定是 `StreamFinished`。
-"""
+"""按脚本产出完整模型流并记录请求，供离线测试使用。"""
 
 from __future__ import annotations
 
@@ -135,11 +131,7 @@ def script_provider(turns: Sequence[AssistantTurn]) -> ModelProvider:
 def stream_from_coroutine(
     factory: Callable[[], Awaitable[AssistantTurn]],
 ) -> AsyncIterator[StreamChunk]:
-    """把一个「一次性产出 turn」的协程包成 chunk 流。
-
-    **只用于测试替身。** 生产 adapter 直接实现 `generate_stream`（DSH 里
-    `LlmAdapter.stream()` 是 "the only required method"，没有第二条入口）。
-    """
+    """将返回 AssistantTurn 的协程包装为测试用 StreamChunk 流。"""
 
     async def _run() -> AsyncIterator[StreamChunk]:
         for chunk in chunks_for_turn(await factory()):

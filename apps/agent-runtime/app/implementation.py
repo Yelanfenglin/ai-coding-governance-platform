@@ -1,8 +1,4 @@
-"""Model explanations linked to observed delivery evidence.
-
-This is a product extension informed by the tutorial's intent-based review design,
-not an upstream Agent-loop feature. Location checks do not prove claim semantics.
-"""
+"""将实现说明关联到交付中观察到的文件、行号和检查证据。"""
 
 from __future__ import annotations
 

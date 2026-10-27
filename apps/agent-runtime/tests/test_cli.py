@@ -1,9 +1,4 @@
-"""CLI 的会话续接（S07）。
-
-上游交互客户端从 Agent/session 取回上下文再继续对话；本地 `--session` 之前只追加
-日志、仍以「新 system + 当前问题」启动，所以它不是「继续上次会话」。
-这里用离线的替身 provider 验证：第二轮请求确实带上了第一轮的历史，且只有一条 system。
-"""
+"""验证 CLI 续接历史、保持单一 system 前缀和工具调用配对。"""
 
 from __future__ import annotations
 

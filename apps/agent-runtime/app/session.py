@@ -176,15 +176,9 @@ class JsonlSessionStore:
 def apply_compaction(
     messages: list[Message], summary: str, kept_messages: int
 ) -> list[Message]:
-    """按一次压缩记录重建上下文：原 system head + **user** checkpoint + 保留区尾部。
+    """按压缩记录重建上下文：原 system 前缀、user 摘要检查点和保留的原文。
 
-    对应 DSH `region.ts::compactSurfaceRegion`：被压缩区间被一条 user 角色、
-    带 `<compacted-summary>` framing 的消息取代（`summarizer.ts::frameSummary`），
-    而不是新增一条 system 摘要。
-
-    与 `compact_context()` 的产出形状保持一致，所以重放结果 == 压缩当时的上下文：
-    旧 checkpoint 位于 body 中，若它落在保留区之外就会随区域一起被新 checkpoint 吸收
-    （滚动合并）；若落在保留区内则原样留下 —— 与压缩时的行为相同。
+    保留区外的旧检查点随区域滚动合并，保留区内的检查点原样留存。
     """
     prefix_end = leading_system_count(messages)
     fixed = messages[:prefix_end]

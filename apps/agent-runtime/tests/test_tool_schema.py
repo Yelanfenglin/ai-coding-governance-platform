@@ -1,13 +1,4 @@
-"""工具参数的 schema 值校验（RC06 / DSH `tools/schema.ts`）。
-
-上游在调用 handler 之前校验 schema；本地之前只检查「参数是 dict + required 键存在」，
-所以声明为整数的参数传字符串照样进 handler。这里固定**支持子集**的行为。
-
-两件事都要保证：
-1. 声明了的关键字按所声明的语义执行（`integer` 按数值判、`const` 按严格 JSON 值判）；
-2. 不支持或本身无效的约束**明确拒绝**，而不是静默忽略 —— 上游 `assertSupportedJsonSchema`
-   对不支持/位置不对的关键字就是拒绝。
-"""
+"""验证工具派发前的 schema 支持集、约束格式与参数值检查。"""
 
 from __future__ import annotations
 
@@ -133,12 +124,7 @@ async def test_array_items_and_bounds() -> None:
 
 
 async def test_unsupported_keywords_are_rejected_not_ignored() -> None:
-    """反例（F03）：`oneOf` 不在支持集里，必须**拒绝派发**而不是静默忽略。
-
-    上游 `assertSupportedJsonSchema` 对不支持的关键字是拒绝。本地之前只在文档里声明
-    「不实现 oneOf」，实际却按空 schema 放行 —— 于是 `{"oneOf": [...]}` 下的布尔值
-    也能进 handler，调用方会以为自己被约束过。
-    """
+    """不支持的 schema 关键字阻止工具派发。"""
     received: list[Any] = []
     registry = registry_with(
         {"type": "object", "properties": {"n": {"oneOf": [{"type": "string"}]}}},
@@ -178,11 +164,7 @@ async def test_annotation_keywords_are_still_accepted() -> None:
 
 
 async def test_integral_float_is_an_integer() -> None:
-    """反例（F03）：JSON 的 integer 是「数值没有小数部分」（上游 `Number.isInteger`）。
-
-    按 Python 对象类型判（`isinstance(value, int)`）会把模型常发的 `1.0` 拒掉 ——
-    那是实现细节泄漏到协议语义里。
-    """
+    """JSON integer 按数值判断，接受 1.0。"""
     received: list[Any] = []
     registry = registry_with(
         {"type": "object", "properties": {"n": {"type": "integer"}}}, received
@@ -197,10 +179,7 @@ async def test_integral_float_is_an_integer() -> None:
 
 
 async def test_const_distinguishes_boolean_from_number() -> None:
-    """反例（F03）：`const: 1` 不能接受 `true`（Python 里 `True == 1`）。
-
-    上游用严格比较（`!==`）；本地 `enum` 已经按 JSON 值语义比，`const` 之前漏了。
-    """
+    """按 JSON 值语义区分 true 与 1。"""
     schema = {"type": "object", "properties": {"n": {"const": 1}}}
 
     assert validate_arguments(schema, {"n": True}) is not None
@@ -241,5 +220,5 @@ async def test_invalid_schema_declarations_are_rejected() -> None:
 
 
 async def test_non_object_arguments_are_rejected() -> None:
-    """坏 JSON 会保留成原始字符串（DSH `parseArguments`），这里转成入参错误。"""
+    """非法 JSON 原文转换为工具入参错误。"""
     assert validate_arguments({"type": "object"}, "{not json") is not None

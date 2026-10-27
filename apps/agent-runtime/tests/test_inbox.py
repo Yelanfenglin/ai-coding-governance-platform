@@ -1,9 +1,4 @@
-"""Phase D：Inbox / steering / follow-up。
-
-语义对齐 DSH `packages/core/agent-loop/src/inbox.ts` 与 `agent.ts` 的 send/claim：
-steer → next-step（当前 assistant turn 与 tool calls 之后注入，不开新 turn）；
-followup → next-turn（当前 turn 结束后开新 turn）；目标必须显式选择。
-"""
+"""验证插话进入 next-step、追问进入 next-turn，以及队列的认领与清理。"""
 
 from __future__ import annotations
 
@@ -134,7 +129,7 @@ async def test_steer_is_injected_at_the_next_step_without_a_new_turn() -> None:
 
 
 async def test_pending_steering_keeps_the_same_turn_after_completion() -> None:
-    """DSH：turn 结束但 next-step 还有输入时，steering 继续占用同一个 turn。"""
+    """回合完成后仍有插话输入时，在同一回合继续执行。"""
     inbox = Inbox()
     provider = MockProvider([tool_call_turn(), final_turn("A"), final_turn("B")])
 

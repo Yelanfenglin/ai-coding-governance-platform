@@ -1,7 +1,6 @@
-"""Explicit host checks using the existing command executor and tool feedback.
+"""通过宿主配置的命令执行工程检查，并将实际结果返回工具调用方。
 
-This is a local delivery extension, not a DSH feature or a sandbox. Configuration
-is loaded by the host once; the model cannot replace its argv through tool args.
+检查配置在任务装配时加载，执行参数由宿主配置提供。
 """
 
 from __future__ import annotations

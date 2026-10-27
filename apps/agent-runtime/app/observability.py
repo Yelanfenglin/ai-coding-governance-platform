@@ -1,8 +1,6 @@
-"""OpenTelemetry observation of the existing runtime; no execution policy.
+"""通过 OpenTelemetry 记录任务、模型、工具及检索调用。
 
-DSH session-telemetry separates capture from SDK-owned delivery. OpenHands'
-Telemetry/RootSpan keep request accounting inside a span's lifetime and attach
-detached spans at async entry points. See docs/observability.md for pinned sources.
+请求用量在 span 生命周期内归集；异步入口显式传递追踪上下文。
 """
 
 from __future__ import annotations

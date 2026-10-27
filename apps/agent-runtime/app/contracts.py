@@ -1,8 +1,4 @@
-"""运行时契约：消息、工具、provider、事件与终止状态。
-
-终止语义以 DSH 的模型/工具终止、max-tokens、取消、错误为基础。
-本地额外提供可选 Budget（step / wall time），配额用尽与取消分开。
-"""
+"""定义消息、工具、模型流、事件与终止状态，以及可选步骤和时间预算。"""
 
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ StopReason = Literal["stop", "tool_calls", "length", "error", "aborted"]
 AgentStatus = Literal[
     "completed", "max_tokens", "aborted", "error", "budget_exceeded"
 ]
-#: 工具的并发模式（DSH `ToolExecutionMode`）。默认 exclusive，未声明的工具不会被并行。
+#: 工具并发模式，默认 exclusive。
 ExecutionMode = Literal["parallel", "exclusive"]
 
 
@@ -26,8 +22,7 @@ ExecutionMode = Literal["parallel", "exclusive"]
 class ToolCall:
     id: str
     name: str
-    #: 解析后的入参。正常是 `dict`；模型给出的参数不是合法 JSON 时保留**原始文本**
-    #: （DSH `parseArguments` 的 `catch { return raw }`），由工具层报入参错误。
+    #: 解析后的入参；非法 JSON 保留原文，由工具层报告入参错误。
     arguments: Any = field(default_factory=dict)
 
 
@@ -38,11 +33,11 @@ class Message:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
-    #: DSH 的 `interrupted`：这段 assistant 输出被取消截断，是可见前缀而非完整回合。
+    #: 标记因取消而截断的 assistant 可见前缀。
     interrupted: bool = False
-    #: Host-attested DSH message attribution; not part of the wire prompt.
+    #: 宿主记录的消息归属信息，与发送给模型的内容分别保存。
     source: dict[str, Any] | None = None
-    #: DeepSeek/DSH reasoning is replayed separately from user-visible text.
+    #: 推理内容独立于用户可见正文重放。
     reasoning_content: str = ""
 
 
@@ -88,11 +83,7 @@ class Usage:
 
 @dataclass(slots=True)
 class RunControl:
-    """One task's budget and observed usage, shared with tool-invoked child runs.
-
-    Step/time Budget is a local adaptation. The shared usage object follows
-    OpenAI Agents SDK Agent.as_tool's nested ToolContext(usage=context.usage).
-    """
+    """维护任务预算与实际用量，并与工具调用的子任务共享用量对象。"""
 
     budget: Budget | None = None
     steps: int = 0
@@ -102,7 +93,7 @@ class RunControl:
 
 @dataclass(slots=True, frozen=True)
 class ContextUsageAnchor:
-    """DSH token-meter 的请求/用量锚点，供后续请求和会话续接计算有符号增量。"""
+    """保存请求与实际用量锚点，供后续请求和会话续接计算上下文增减。"""
 
     header: str
     surface_tokens: int
@@ -110,13 +101,8 @@ class ContextUsageAnchor:
     usage_tokens: int
 
 
-# --- LLM 流协议（对齐 DSH `dsh-llm` 的 `StreamChunk`）---------------------------
-#
-# 上游把「一个 block 的生命周期」建模成显式事件：`block-start` 开块，若干带 `index`
-# 的 delta 增量，`block-end` 关闭并携带组装好的 block；`usage` 与 `finish` 是独立
-# chunk，终止原因（含 aborted / error）是**流里的数据**而不是异常。
-#
-# 这里逐个对齐，不做简化：见 DSH `packages/llm/llm/src/types.ts` 的 `StreamChunk`。
+# --- 模型流协议 -----------------------------------------------------------
+# block-start、delta、block-end 管理消息块生命周期；usage 和 finish 单独发出。
 
 BlockType = Literal["text", "reasoning", "tool-call"]
 
@@ -133,12 +119,7 @@ class ReasoningBlock:
 
 @dataclass(slots=True, frozen=True)
 class ToolCallBlock:
-    """模型请求的工具调用。
-
-    `arguments` 是**原始 JSON 字符串**（DSH `ToolCallBlock.arguments`），不是解析后的
-    dict。坏 JSON 保留原文交给工具层处理（DSH `parseArguments` 的 `catch { return raw }`），
-    而不是让整个响应失败。
-    """
+    """模型请求的工具调用；参数保留原始 JSON 字符串，解析由工具层处理。"""
 
     id: str
     name: str
@@ -150,7 +131,7 @@ ContentBlock = TextBlock | ReasoningBlock | ToolCallBlock
 
 @dataclass(slots=True, frozen=True)
 class LlmFailure:
-    """可序列化的失败事实；是否可重试由策略决定（DSH `LlmFailure`）。"""
+    """可序列化的失败信息，供策略判断是否重试。"""
 
     message: str
     code: str
@@ -158,7 +139,7 @@ class LlmFailure:
     retry_after_ms: int | None = None
 
 
-#: DSH `FinishReasonMap` 的五个分支。本地用 `kind` 判别，等价于 TS 的 discriminated union。
+#: 通过 kind 区分终止原因的五类分支。
 FinishKind = Literal["stop", "tool-calls", "max-tokens", "aborted", "error"]
 
 
@@ -198,7 +179,7 @@ class ToolCallDelta:
 
 @dataclass(slots=True, frozen=True)
 class BlockEnd:
-    """关闭一个 block，携带组装好的 block（DSH：`block-end` 是权威值）。"""
+    """关闭消息块，并携带最终组装内容。"""
 
     index: int
     block: ContentBlock
@@ -206,7 +187,7 @@ class BlockEnd:
 
 @dataclass(slots=True, frozen=True)
 class UsageChunk:
-    """token 记账。DSH 要求它在 terminal `finish` 之前发出。"""
+    """在流结束事件之前发出 token 用量。"""
 
     usage: Usage
 
@@ -228,10 +209,7 @@ StreamChunk = (
     | StreamFinished
 )
 
-#: 组装结果的内部表示。
-#:
-#: 只在 adapter 层之外使用（loop 判断是否继续、session 落盘）。**不是流协议的一部分** ——
-#: DSH 没有这个结构，内容都在 `block-end` / `usage` / `finish` 里，用 `BlockAssembler` 折。
+#: BlockAssembler 生成的内部结果，用于循环控制与会话持久化。
 @dataclass(slots=True)
 class AssistantTurn:
     message: Message
@@ -264,7 +242,7 @@ class ToolResult:
     content: str
     is_error: bool = False
     concludes_turn: bool = False
-    #: DSH additionalContexts, accepted in tool-result order at the next step.
+    #: 按工具结果顺序在下一 step 注入的附加上下文。
     additional_contexts: list[Message] = field(default_factory=list)
 
 
@@ -285,22 +263,15 @@ class ModelRequest:
     messages: list[Message]
     tools: list[ToolDefinition]
     cancelled: Callable[[], bool] | None = None
-    #: 辅助调用的用途（DSH `GenerateOptions.purpose`）。适配器可映射成模型不可见的
-    #: 传输元数据，或据此套用专门的生成策略；普通对话请求留空。
+    #: 辅助调用用途，供适配器选择传输元数据或生成策略；普通对话留空。
     purpose: Literal["compaction", "session-title"] | None = None
     max_output_tokens: int | None = None
 
 
 class ModelProvider(Protocol):
-    """模型适配器：**唯一入口是一条 `StreamChunk` 流**。
+    """模型适配器的流式接口。
 
-    对齐 DSH `LlmAdapter.stream()`：上游注释原文是 "Stream one model call as raw
-    chunks. The only required method."。没有 `generate()` / `complete()` 之类的
-    第二入口，也没有「一次性完成」的 fallback。
-
-    终止（含 aborted / error）是流里的 `finish` chunk，**不是异常**。适配器内部可以
-    抛错，但那由适配器自己（或调用方归一化层）翻译成 terminal `finish`，不会以
-    异常的形式穿过消费方。
+    通过 generate_stream 产出 StreamChunk；错误和取消统一表示为终止 finish 块。
     """
 
     def generate_stream(self, request: ModelRequest) -> AsyncIterator[StreamChunk]: ...
@@ -353,7 +324,7 @@ class AssistantReasoningDelta:
 
 @dataclass(slots=True, frozen=True)
 class ProviderRetryScheduled:
-    """一次重试已排定、正在等待（DSH 的 `llm/retry`）。"""
+    """记录已排定的重试及等待时间。"""
 
     turn: int
     step: int
@@ -383,7 +354,7 @@ class MemoryRecalled:
 
 @dataclass(slots=True, frozen=True)
 class ContextCompacted:
-    """上下文被压缩：摘要 + 保留的原文条数（DSH 的 compaction 事件）。"""
+    """记录摘要与保留原文条数。"""
 
     turn: int
     step: int
@@ -405,7 +376,7 @@ class CompactionWarning:
 
 @dataclass(slots=True, frozen=True)
 class InboxClaimed:
-    """从 Inbox 取走了一批待处理输入，即将进入本 step（DSH `agent/inbox/claimed`）。"""
+    """记录本 step 认领的待处理输入。"""
 
     turn: int
     step: int

@@ -114,12 +114,9 @@ def _repair_pairing(messages: list[Message]) -> list[Message]:
 def _continuation(
     history: list[Message], question: str, extra_prompt: str = "",
 ) -> list[Message]:
-    """把本次问题接到已有上下文后面（上游交互客户端从 session 接续）。
+    """将新问题接入会话历史，沿用已有 system 前缀并补齐工具调用配对。
 
-    规则：沿用会话**自己的** system head，不重新拼一份 —— 否则同一会话里会出现两条
-    system，旧的固定前缀被替换，provider 的前缀缓存和已确立的指令都会变。
-    历史为空时（新会话 / `--no-history`）才用当前 system prompt。
-    接之前先补齐工具调用配对：中断留下的半截历史不能原样送下一轮。
+    新会话使用当前 system prompt；续接时保留原会话的固定前缀。
     """
     prompt = react_system_prompt() + (f"\n\n{extra_prompt}" if extra_prompt else "")
     if not history:

@@ -1,9 +1,4 @@
-"""Phase F：长期记忆（参照 Hermes Agent 的有界记忆设计）。
-
-覆盖：有界写入（写不下显式失败、不静默淘汰）、add/replace/remove、软失效 +
-applies_to 过滤、用户画像分库、Agent 工具写入、会话回溯（FTS5 + LIKE 兜底）、
-frozen snapshot 注入位置与替换。
-"""
+"""验证记忆容量、增删改、适用范围过滤、画像分库、历史检索与快照注入。"""
 
 from __future__ import annotations
 
@@ -71,7 +66,7 @@ async def test_remember_then_recall_and_persist(tmp_path: Path) -> None:
 
 
 async def test_budget_is_bounded_and_fails_loudly(tmp_path: Path) -> None:
-    """Hermes：写不下就显式失败，绝不静默淘汰旧条目。"""
+    """容量不足时返回错误并保留已有条目。"""
     store = JsonMemoryStore(tmp_path / "memory.json", max_chars=80)
 
     await store.remember("a", "x" * 10)
@@ -245,7 +240,7 @@ async def test_memory_full_is_an_observation_not_a_crash(tmp_path: Path) -> None
     assert "memory full" in result.content
 
 
-# --- 会话回溯（Hermes 第三层）-----------------------------------------------
+# --- 会话历史检索 --------------------------------------------------------
 
 
 async def test_session_search_finds_past_messages(tmp_path: Path) -> None:

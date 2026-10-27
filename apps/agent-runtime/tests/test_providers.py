@@ -249,7 +249,7 @@ async def test_chunks_from_sse_opens_closes_blocks_and_defers_termination() -> N
         ]
     )
 
-    # block-end / usage / finish 全部延迟到 [DONE]，与 DSH translate.ts 一致。
+    # 块结束、用量与终止事件在 DONE 后依次发出。
     assert [type(chunk).__name__ for chunk in chunks] == [
         "BlockStart",
         "TextDelta",
@@ -296,7 +296,7 @@ async def test_sse_reasoning_opens_its_own_block_before_text() -> None:
 
 
 async def test_missing_finish_reason_defaults_to_stop() -> None:
-    """DSH `translate.ts`：`pendingFinish ?? {kind: 'stop'}` —— 缺 finish_reason 不是错误。"""
+    """缺少 finish_reason 时使用 stop。"""
     chunks = await sse_chunks(
         [sse({"choices": [{"delta": {"content": "dangling"}}]}), "data: [DONE]\n\n"]
     )
@@ -306,7 +306,7 @@ async def test_missing_finish_reason_defaults_to_stop() -> None:
 
 
 async def test_sse_without_done_is_stream_closed() -> None:
-    """DSH `sse.ts`：没有 `[DONE]` 结尾才算 STREAM_CLOSED。"""
+    """流耗尽但缺少 DONE 时报告 STREAM_CLOSED。"""
     with pytest.raises(ProviderError) as caught:
         await sse_chunks([sse({"choices": [{"delta": {"content": "dangling"}}]})])
 
@@ -328,7 +328,7 @@ async def test_empty_completion_becomes_an_error_finish(delta) -> None:
 
 
 async def test_tool_arguments_that_are_not_json_are_kept_raw() -> None:
-    """DSH `parseArguments`：坏 JSON 保留原文，不让整个响应失败。"""
+    """非法 JSON 工具参数保留原文。"""
     chunks = await sse_chunks(
         [
             sse(

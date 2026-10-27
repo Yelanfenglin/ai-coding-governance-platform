@@ -1,17 +1,8 @@
-"""增量 chunk 组装器。
+"""组装流式消息块。
 
-直接移植 DSH `packages/llm/llm/src/assembler.ts` 的 `BlockAssembler`：
-
-- 以 `index` 为单位维护 partial，`order` 记录首次出现顺序；
-- 对 delta-only 协议容错（没有 `block-start` 也能从 delta 建块）；
-- `block-end` 第一次关闭为准，之后的 delta / 重复关闭一律忽略（流畸形不会污染已关闭块）；
-- `finish` 缺省为 `{kind: 'stop'}`；
-- `max-tokens` 截断时**丢弃所有 tool-call block**（截断的调用无法安全执行）；
-- `interrupted` 只保留 text / reasoning 且非空白内容的块，丢弃 tool-call
-  （中断发生在派发之前，保留它就得伪造一个结果）。
-
-这几条不是"顺手加的校验"，是上游的既有行为，逐条对应 assembler.ts 的
-`assemble()` / `assembled()` / `interruptedBlocks()`。
+按 index 保存增量，以首次出现顺序输出；支持从 delta 建块。
+block-end 关闭后忽略后续增量；缺少 finish 时使用 stop。
+长度截断时丢弃工具调用，中断时仅保留非空的文本与推理块。
 """
 
 from __future__ import annotations
@@ -51,10 +42,7 @@ class _Partial:
     block: ContentBlock | None = None
 
 
-#: `FinishReason.kind` → 内部 `StopReason`。
-#:
-#: 两套名字是刻意的：前者是协议（DSH 的 `tool-calls` / `max-tokens`），后者是本包
-#: 既有的内部表示（`tool_calls` / `length`）。转换只发生在组装结果这一个点上。
+#: 将协议终止原因映射为内部 StopReason；仅在组装完成时转换。
 _STOP_REASON: dict[str, StopReason] = {
     "stop": "stop",
     "tool-calls": "tool_calls",
@@ -184,7 +172,7 @@ class BlockAssembler:
 
     @property
     def finish(self) -> FinishReason:
-        """终止原因；流没有给 `finish` 时按 DSH 缺省 `{kind: 'stop'}`。"""
+        """返回终止原因；流未提供 finish 时使用 stop。"""
         return self._finish or FinishReason(kind="stop")
 
     def message(self) -> Message:
@@ -219,7 +207,7 @@ def _reasoning_of(blocks: list[ContentBlock]) -> str:
 
 
 def _block_kind(block: ContentBlock) -> BlockType:
-    """已关闭 block 的类别。DSH 的 block 自带 `type` 判别字段，这里用 isinstance。"""
+    """通过块类型识别已关闭消息块的类别。"""
     if isinstance(block, TextBlock):
         return "text"
     if isinstance(block, ReasoningBlock):
@@ -234,11 +222,7 @@ def _to_tool_call(block: ToolCallBlock):
 
 
 def parse_arguments(raw: str):
-    """把 tool-call 的原始参数串解析成工具入参。
-
-    对齐 DSH `tool-calls.ts::parseArguments`：空输入 → `{}`；**坏 JSON 保留原文**，
-    交给工具自己报错，而不是让整个响应失败。
-    """
+    """解析工具参数：空输入返回空字典，非法 JSON 保留原文供工具层报告错误。"""
     if raw == "":
         return {}
     import json

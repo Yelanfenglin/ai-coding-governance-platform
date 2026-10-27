@@ -1,4 +1,4 @@
-"""Source-derived DSH fixtures plus public loop/CLI lifecycle counterexamples."""
+"""验证目标状态折叠、轮次提示词和公开循环及 CLI 的生命周期。"""
 
 from __future__ import annotations
 

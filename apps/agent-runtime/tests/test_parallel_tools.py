@@ -1,9 +1,4 @@
-"""Phase C：并行工具 + exclusive barrier。
-
-调度语义对齐 DSH `packages/core/agent-loop/src/tool-calls.ts`：
-parallel-safe 的连续 call 进有界并发池，exclusive call 是屏障，结果按模型顺序写回，
-取消时已开始的 call 结果必须提交、未派发的补 synthetic 结果。
-"""
+"""验证有界并发、独占屏障、结果提交顺序和取消清理。"""
 
 from __future__ import annotations
 
@@ -123,7 +118,7 @@ async def test_exclusive_tools_do_not_overlap() -> None:
 
 
 async def test_default_execution_mode_is_exclusive() -> None:
-    """未声明 execution_mode 的工具不能被并行（DSH 默认 exclusive）。"""
+    """未声明并发模式的工具按独占模式执行。"""
     async def slow(args: dict[str, object], context: object) -> ToolResult:
         await asyncio.sleep(0.03)
         return ToolResult(content=str(args.get("name", "?")))
@@ -586,7 +581,7 @@ async def test_cancel_is_bounded_when_a_result_write_is_stuck(
 
 
 async def test_concludes_turn_keeps_sibling_results() -> None:
-    """DSH：concludes_turn 不丢同 step 内其余 call 的结果，只保证不再请求模型。"""
+    """完成标记保留当前 step 的全部工具结果，并结束后续模型请求。"""
 
     async def submit(args: dict[str, object], context: object) -> ToolResult:
         return ToolResult(content="submitted", concludes_turn=True)

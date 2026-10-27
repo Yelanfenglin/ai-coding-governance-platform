@@ -1,8 +1,4 @@
-"""DSH tool-goal and tool-todo model contracts, adapted to FunctionTool.
-
-Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
-Source commit aa8262ec091698bae9a6b04773a6b5b06ad4aef2.
-"""
+"""通过 FunctionTool 提供目标与待办事项的模型调用接口。"""
 
 from __future__ import annotations
 

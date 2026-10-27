@@ -1,8 +1,4 @@
-"""Phase A：provider 流式输出。
-
-中断语义对齐 DSH `packages/core/agent-loop/src/agent.ts`：
-取消中断 → 提交可见前缀（`interrupted: true`）；错误中断 → 不把半成品写成消息。
-"""
+"""验证取消时保存可见前缀，以及错误中断时的请求与消息记录。"""
 
 from __future__ import annotations
 
@@ -42,7 +38,7 @@ def final_turn(text: str) -> AssistantTurn:
 
 
 class ScriptedStreamProvider:
-    """只实现 generate_stream 的 provider（DSH 里这是唯一入口）。"""
+    """按脚本实现 generate_stream 的测试适配器。"""
 
     def __init__(self, chunks: list[StreamChunk]) -> None:
         self.chunks = chunks
@@ -136,7 +132,7 @@ async def test_reasoning_deltas_are_forwarded() -> None:
 
 
 async def test_cancel_mid_stream_commits_the_visible_prefix() -> None:
-    """DSH agent.ts：取消中断时把已输出文本作为 interrupted message 落盘。"""
+    """取消时保存已输出内容，并标记消息被中断。"""
     cancel_event = asyncio.Event()
     provider = ScriptedStreamProvider([])
 
@@ -164,7 +160,7 @@ async def test_cancel_mid_stream_commits_the_visible_prefix() -> None:
 
 
 async def test_error_mid_stream_does_not_commit_a_partial_message() -> None:
-    """DSH agent.ts：非取消的失败只留 attempt，不把半成品写成 assistant message。"""
+    """流错误只保留请求尝试记录，消息历史保持完整回合。"""
     provider = ScriptedStreamProvider([])
 
     async def stream():  # noqa: ANN202
@@ -198,12 +194,7 @@ async def test_stream_without_a_terminal_event_is_stream_closed() -> None:
 
 
 async def test_provider_without_stream_is_rejected() -> None:
-    """契约只认 `generate_stream`：只有 `generate` 的 provider 直接失败。
-
-    DSH `LlmAdapter.stream()` 是 the only required method（"Stream one model call
-    as raw chunks. The only required method."）。本地不再保留非流式回退，所以这类
-    provider 不会被静默接受。
-    """
+    """模型适配器必须实现 generate_stream。"""
 
     class NonStreamingProvider:
         def __init__(self) -> None:

@@ -1,16 +1,7 @@
-"""长期记忆（Phase F）：有界的事实库 / 用户画像。
+"""持久化有字符预算的项目事实与用户画像。
 
-参照 Hermes Agent（`NousResearch/hermes-agent`）的记忆设计：
-
-- **有界**：字符预算（MEMORY.md 2200 / USER.md 1375），写不下就**显式失败**，
-  绝不静默淘汰 —— 让 Agent/调用方自己 consolidate；
-- **两个库**：`JsonMemoryStore`（环境事实、约定、教训）与用户画像（`scope="user"` 的库），
-  在回合开始时作为 **frozen snapshot** 注入（Hermes 为保 prefix cache 不在中途刷新）；
-- **Agent 自管理**：`memory_tools()` 给出 add / replace / remove 三个工具；
-- **软失效 + applies_to**：`invalidate()` 保留记录可审计；`applies_to` 与当前上下文
-  （型号 / 版本）冲突的条目不召回。
-
-记忆不替代 citation：注入块里写死「verify before use, citations win」。
+每回合注入固定快照；工具可添加、更新和删除条目。
+容量不足时返回错误，由调用方整理；失效条目保留记录，并按 applies_to 过滤召回。
 """
 
 from __future__ import annotations
@@ -29,9 +20,7 @@ from typing import Any, Protocol
 
 from .contracts import MemoryItem
 
-#: 默认字符预算。Hermes 是 2200 / 1375；这里默认放大到 6000 / 3000，仍然是有界的
-#: —— 预算本身可配置。注意：按 **字符数**（`len(str)`）计算，既不是字节数也不是 token 数。
-#: 按路径共享的提交锁（进程内）。
+#: 预算按字符数计算并可配置；提交锁在进程内按路径共享。
 _PATH_LOCKS: dict[str, threading.Lock] = {}
 _PATH_LOCKS_GUARD = threading.Lock()
 
@@ -60,7 +49,7 @@ def _open_lock_file(path: Path) -> Any:
 
 
 def _acquire(handle: Any) -> None:
-    """阻塞式获取 OS 文件锁（Hermes 的 `_path_lock`）。"""
+    """阻塞获取操作系统文件锁。"""
     if os.name == "nt":
         import msvcrt  # noqa: PLC0415 - 平台相关模块，只在需要时导入
 
@@ -94,11 +83,9 @@ def _release(handle: Any) -> None:
 
 @contextlib.contextmanager
 def _file_lock(path: Path) -> Iterator[None]:
-    """跨进程互斥：同一 journal 的提交与读取在同一把 OS 文件锁下进行。
+    """通过操作系统文件锁互斥访问同一记忆日志。
 
-    进程内的 `threading.Lock` 只能约束同一个解释器；两个 CLI 进程 / Agent 与外部
-    API 同时写一份记忆库时，仍会各自依据旧状态通过预算检查。Hermes 用文件锁解决，
-    这里用同样的机制（Windows `msvcrt.locking` / POSIX `flock`）。
+    Windows 使用 msvcrt.locking，POSIX 使用 flock；读取与提交共享同一把锁。
     """
     lock_path = _lock_path_for(path)
     handle = _open_lock_file(lock_path)
@@ -128,7 +115,7 @@ USER_HEADER = "## User profile (stable preferences)"
 
 
 class MemoryFullError(RuntimeError):
-    """超过字符预算。Hermes 的做法是显式失败，让调用方自己腾地方。"""
+    """字符预算不足，需调用方整理现有条目。"""
 
 
 @dataclass(frozen=True)
@@ -168,9 +155,7 @@ class JsonMemoryStore:
         self.path = Path(path)
         self.max_chars = max_chars
         self.default_scope = default_scope
-        #: 提交锁按**路径**共享（Hermes 用基于文件的锁）：同一路径的多个 store 实例
-        #: 必须受同一把锁约束，否则两个提交者会各自依据旧状态通过容量检查。
-        #: 这是进程内的一层；跨进程由提交时的 `_file_lock`（OS 文件锁）兜住。
+        #: 同一路径的 store 实例共享提交锁；跨进程访问再由 OS 文件锁保护。
         self._write_lock = _path_lock(self.path)
 
     # --- 写入 -------------------------------------------------------------
@@ -202,10 +187,7 @@ class JsonMemoryStore:
         scope: str | None = None,
         applies_to: dict[str, str] | None = None,
     ) -> MemoryItem | None:
-        """更新条目及显式提供的元数据；省略的字段保留，source="" 可清除错误来源。
-
-        Hermes patch 修改文本条目；这里的元数据是本地结构化适配，必须能一起纠正。
-        """
+        """更新条目和显式传入的元数据；省略字段保持原值，source 空串清除来源。"""
         items = await self._load()
         for item in items:
             if item.key == key:
@@ -224,7 +206,7 @@ class JsonMemoryStore:
         return None
 
     async def remove(self, key: str) -> bool:
-        """硬删除（Hermes 的 `remove`）。"""
+        """永久删除条目。"""
         items = await self._load()
         if not any(item.key == key for item in items):
             return False
@@ -272,7 +254,7 @@ class JsonMemoryStore:
         return [item for _, item in scored[:limit]]
 
     def usage(self, items: list[MemoryItem] | None = None) -> tuple[int, int]:
-        """`(已用字符, 预算)`，渲染时显示占用率（Hermes 的 `[67% — 1,474/2,200]`）。"""
+        """返回已用字符数与预算，供显示占用率。"""
         active = [item for item in (items or []) if item.active]
         return self._used(active), self.max_chars
 

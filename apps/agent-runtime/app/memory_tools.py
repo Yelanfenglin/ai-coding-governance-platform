@@ -1,7 +1,4 @@
-"""Agent 自管理的记忆工具（Hermes 的 memory tool：add / replace / remove）。
-
-写入类工具默认 `exclusive`（屏障），避免并发写坏同一个 key。
-"""
+"""提供添加、替换和删除记忆的工具；写入采用 exclusive 调度。"""
 
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ def _schema(properties: dict[str, object], required: list[str]) -> dict[str, obj
 
 
 def _saved(item: MemoryItem) -> ToolResult:
-    # 只回显本次保存的条目，不倾倒整库（Hermes 的成功响应同样避免回显整库）。
+    # 仅回显本次保存的条目。
     return ToolResult(content=json.dumps({
         "saved": True, "key": item.key, "value": item.value, "source": item.source,
         "scope": item.scope, "applies_to": item.applies_to,
@@ -144,7 +141,7 @@ def memory_tools(
     applies_to: dict[str, str] | None = None,
     default_source: str = "",
 ) -> list[FunctionTool]:
-    """一套工具，通过 target 选择事实库或画像库（Hermes 的双 target 方式）。"""
+    """通过 target 选择项目事实库或用户画像库。"""
     project = [
         remember_fact_tool(store, applies_to=applies_to, default_source=default_source),
         replace_fact_tool(store), forget_fact_tool(store),

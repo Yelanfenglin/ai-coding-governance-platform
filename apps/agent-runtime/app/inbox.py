@@ -1,12 +1,8 @@
-"""Inbox：运行中插话（steer）与回合结束后追问（followup）的待处理输入队列。
+"""管理运行中插话与回合结束后的追问队列。
 
-对齐 DSH `packages/core/agent-loop/src/inbox.ts` 与 `agent.ts`：
-
-- `steer(message)` → `next-step`：当前 assistant turn 与其 tool calls 完成后注入，
-  **不开新 turn**；
-- `followup(message)` → `next-turn`：当前 turn 完全结束后开一个新 turn；
-- `send` 必须显式选择目标，不猜；
-- `claim(target)`：next-step 全部取走；target 为 `next-turn` 时再取一条 next-turn。
+steer 写入 next-step，在当前模型响应及工具调用完成后注入；
+followup 写入 next-turn，在当前回合结束后启动新回合。
+认领输入时取出全部 next-step 消息，并按目标决定是否追加一条 next-turn 消息。
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ class Inbox:
 
     def subscribe(self, listener: Callable[[str, InboxTarget, Message], None],
                   ) -> Callable[[], None]:
-        """DSH inbox inserted/claimed/discarded lifecycle, owned by the live driver."""
+        """订阅由运行驱动器发出的输入插入、认领和丢弃事件。"""
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
 
@@ -87,7 +83,7 @@ class Inbox:
         return claimed
 
     def clear(self) -> list[Message]:
-        """丢弃全部待处理输入（DSH `Inbox.clear`：先 next-step 再 next-turn）。"""
+        """按 next-step、next-turn 的顺序清空待处理输入。"""
         cleared: list[Message] = []
         for target in TARGETS:
             taken = self._take(target)

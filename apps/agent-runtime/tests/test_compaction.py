@@ -1,8 +1,4 @@
-"""Phase E：Token 记账 + Session Tree + Compaction。
-
-参照 DSH `packages/compaction/compaction-basic`：thresholdRatio=0.8、retainRatio=0.16、
-只在 step 边界触发、原始事件不删除、压缩失败回退。
-"""
+"""验证 token 计量、消息分组、摘要检查点与压缩失败回退。"""
 
 from __future__ import annotations
 
@@ -50,7 +46,7 @@ def echo_tool() -> FunctionTool:
 
 
 async def fake_summarizer(transcript: list[Message]) -> str:
-    # 摘要必须**短于**被替换区域，否则 DSH `region.ts` 的缩短验收会拒绝这次压缩。
+    # 摘要长度应小于被替换区域。
     return f"SUMMARY: condensed {len(transcript)} messages"
 
 
@@ -113,10 +109,7 @@ def test_split_region_keeps_the_tail_as_whole_groups() -> None:
 
 
 def test_split_region_never_drops_the_last_group_to_fit_the_budget() -> None:
-    """反例：旧实现把 retain_tokens 当上限，最后一组超额时就一条原文都不保留。
-
-    DSH 的循环是「累计到 >= retainTokens 才停」，允许最后并入的一组超额。
-    """
+    """按完整消息组至少保留 retain_tokens，允许最后一组超出预算。"""
     body = [user_message("q1"), user_message("q2" * 400)]
 
     region, kept = split_region(body, retain_tokens=10)
@@ -148,7 +141,7 @@ async def test_compaction_never_summarizes_the_fixed_system_prompt() -> None:
 
 
 def test_summarization_request_is_a_prefix_of_the_conversation() -> None:
-    """DSH region.ts:528-546：原 system head + 区域消息 + 末尾指令，不加摘要专用 system。"""
+    """摘要请求沿用原 system 前缀，并将摘要指令放在末尾。"""
     head = system_message("you are an agent")
     transcript = [user_message("q1"), user_message("q2")]
 
@@ -222,7 +215,7 @@ def test_summarization_request_can_flatten_for_text_only_providers() -> None:
 
 
 async def test_compaction_discards_a_blank_summary() -> None:
-    """C06 / DSH summarizer.ts:167：非空验收 —— 空白摘要不能替换有效历史。"""
+    """空白摘要保持原上下文。"""
 
     async def blank(transcript: list[Message]) -> str:
         return "   \n\t  "
@@ -236,7 +229,7 @@ async def test_compaction_discards_a_blank_summary() -> None:
 
 
 async def test_compaction_discards_a_summary_that_is_not_shorter() -> None:
-    """C07 / DSH region.ts:398-406：framed summary 必须比被替换区域更小。"""
+    """摘要检查点长度必须小于被替换区域。"""
 
     async def verbose(transcript: list[Message]) -> str:
         return "y" * 10_000
@@ -250,7 +243,7 @@ async def test_compaction_discards_a_summary_that_is_not_shorter() -> None:
 
 
 async def test_compaction_returns_none_when_nothing_can_be_compacted() -> None:
-    """DSH region.ts:146-155：`keepFromIdx <= firstIdx` 时不做压缩。"""
+    """没有可压缩消息区域时返回 None。"""
     messages = [system_message("sys"), user_message("q" * 400)]
 
     outcome = await compact_context(
@@ -278,7 +271,7 @@ async def test_compaction_triggers_at_the_threshold() -> None:
     assert result.status == "completed"
     compacted = [event for event in events if isinstance(event, ContextCompacted)]
     assert len(compacted) == 1
-    # 压力取「上次 input usage」与「当前上下文估算」的较大值（DSH 按当前 surface 计量）。
+    # 为当前上下文和上次请求用量构造压力场景。
     assert compacted[0].context_tokens >= 900
     assert compacted[0].compacted_messages >= 1
     assert any(is_compaction_summary(m) for m in result.messages), "摘要进入上下文"

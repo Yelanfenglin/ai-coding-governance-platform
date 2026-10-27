@@ -1,10 +1,4 @@
-"""DSH goal-round-driver scheduling adapted to the single live Python run.
-
-Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
-Source commit aa8262ec091698bae9a6b04773a6b5b06ad4aef2.
-Round reservation/admission, revision fences, idle-only continuation and stop
-semantics are retained. CLI has no Cordis plugin registry or UI/RPC lifecycle.
-"""
+"""调度目标执行轮次，管理轮次预留、版本栅栏、空闲续跑和停止状态。"""
 
 from __future__ import annotations
 

@@ -1,7 +1,4 @@
-"""最小 Agent Runtime：DSH 风格的 turn/step loop + 工具执行 + 会话事件日志。
-
-终止由模型输出、工具结果 concludes_turn、max-tokens、取消、错误和可选预算驱动。
-"""
+"""本地 Agent Runtime：模型调用、工具执行、会话事件与任务控制。"""
 
 from .assembler import BlockAssembler
 from .contracts import (

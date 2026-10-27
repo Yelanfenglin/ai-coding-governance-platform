@@ -1,8 +1,4 @@
-"""Verbatim DSH goal-round-driver/prompt.ts and tool-goal/wrapup.ts text.
-
-Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
-Source commit aa8262ec091698bae9a6b04773a6b5b06ad4aef2.
-"""
+"""目标轮次、执行指导与收尾提示词。"""
 
 import json
 
@@ -59,7 +55,7 @@ def render_wrapup_context(objective: str, blocked_reason: str | None = None) -> 
 
 
 def goal_guidance(blocked_after: int = 3) -> str:
-    """DSH tool-goal/index.ts::guidance, including its original policy."""
+    """生成目标执行指导。"""
     return (
         "Use goal tools for one long-running completion objective in the current session. "
         "create_goal may infer goal intent from a direct human request in any language; do not "
