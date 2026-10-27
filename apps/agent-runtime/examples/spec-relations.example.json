@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "review": {
+    "source_review": "synthetic example; replace after checking original sources",
+    "independent_review": "pending"
+  },
+  "scopes": [
+    {
+      "product": "EXAMPLE_CHIP",
+      "version": "V1.0",
+      "topics": ["pin_interrupt", "pin_input"],
+      "nodes": [
+        {"id": "pin_interrupt", "label": "Example pin interrupt", "aliases": ["PIN0"]},
+        {"id": "pin_input", "label": "Example pin input path"},
+        {"id": "CTRL.EN", "label": "Example enable field"},
+        {"id": "DIR.IN", "label": "Example input field"}
+      ],
+      "fields": {
+        "CTRL.EN": {"register": "CTRL", "lsb": 0, "width": 1},
+        "DIR.IN": {"register": "DIR", "lsb": 2, "width": 1}
+      },
+      "edges": [
+        {
+          "id": "input_path",
+          "source": "pin_interrupt",
+          "target": "pin_input",
+          "relation": "depends_on",
+          "description": "Example only: inspect the input path for an external input interrupt.",
+          "evidence": {
+            "document_id": "00000000-0000-0000-0000-000000000001",
+            "chunk_id": "00000000-0000-0000-0000-000000000003",
+            "quotes": ["Example source text: IN=1 selects the input path."]
+          }
+        },
+        {
+          "id": "input_direction",
+          "source": "pin_input",
+          "target": "DIR.IN",
+          "relation": "requires_setting",
+          "description": "Example only: the digital input path requires IN=1.",
+          "when": {"input_mode": "digital"},
+          "requires": {"DIR.IN": 1},
+          "evidence": {
+            "document_id": "00000000-0000-0000-0000-000000000001",
+            "chunk_id": "00000000-0000-0000-0000-000000000003",
+            "quotes": ["Example source text: IN=1 selects the input path."]
+          }
+        },
+        {
+          "id": "enable_pin",
+          "source": "pin_interrupt",
+          "target": "CTRL.EN",
+          "relation": "requires_enable",
+          "description": "Example only: enabling the pin interrupt requires CTRL.EN.",
+          "requires": {"CTRL.EN": 1},
+          "evidence": {
+            "document_id": "00000000-0000-0000-0000-000000000001",
+            "chunk_id": "00000000-0000-0000-0000-000000000002",
+            "quotes": ["Example source text: EN=1 enables the pin interrupt."]
+          }
+        }
+      ]
+    }
+  ]
+}

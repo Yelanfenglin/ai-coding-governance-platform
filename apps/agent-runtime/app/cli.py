@@ -61,6 +61,7 @@ from .retry import RetryPolicy
 from .session import JsonlSessionStore, repair_tool_pairing
 from .session_search import SessionSearch
 from .skills import expand_skill, load_skills, read_skill_tool, skills_prompt
+from .spec_evidence import SPEC_EVIDENCE_GUIDANCE, SpecRelationGraph
 from .subagents import SubagentRunner
 from .tools import ToolRegistry
 from .workspace_tools import example_tools, workspace_prompt, workspace_tools
@@ -151,6 +152,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", ""))
     parser.add_argument("--product", default=None, help="default product filter for search_spec")
     parser.add_argument("--version", default=None, help="default version filter for search_spec")
+    parser.add_argument(
+        "--spec-relations", type=Path, default=os.environ.get("SPEC_RELATIONS_PATH"),
+        help="optional host-supplied JSON relation graph for missing-evidence inspection",
+    )
     parser.add_argument("--skill", default=None, help="explicitly load a named skill for this task")
     parser.add_argument(
         "--rag-url", default=os.environ.get("RAG_API_URL", "http://127.0.0.1:8000/api/rag")
@@ -293,6 +298,13 @@ async def _run_once(
     if not args.base_url:
         print("OPENAI_BASE_URL (or --base-url) is required", file=sys.stderr)
         return EXIT_FAILED
+    relations = None
+    if args.spec_relations:
+        try:
+            relations = SpecRelationGraph.load(Path(args.spec_relations))
+        except (OSError, ValueError) as error:
+            print(f"invalid specification relation graph: {error}", file=sys.stderr)
+            return EXIT_FAILED
     if (args.context_window <= 0 or args.memory_chars <= 0 or args.profile_chars <= 0
             or args.max_goal_rounds <= 0):
         print("context and memory budgets must be positive", file=sys.stderr)
@@ -320,18 +332,18 @@ async def _run_once(
         RagClientConfig(base_url=args.rag_url, api_key=args.rag_key or None),
         breakers=breakers,
     )
+    workspace = args.workspace or module_project
+    selected = _workspace_target(workspace) if workspace else None
 
     registry = ToolRegistry()
-    for tool in rag_tools(client, default_product=args.product, default_version=args.version):
+    for tool in rag_tools(client, default_product=args.product, default_version=args.version,
+                          relations=relations, workspace=selected):
         registry.register(tool)
     if module_project:
         project_type = FirmwareProject if args.firmware_project else DemoProject
         for tool in demo_tools(project_type(module_project, args.examples_root)):
             registry.register(tool)
-    workspace = args.workspace or module_project
-    selected: Path | None = None
-    if workspace:
-        selected = _workspace_target(workspace)
+    if selected is not None:
         for tool in workspace_tools(selected, manifest=True if module_project else None):
             registry.register(tool)
         if args.examples_root:
@@ -420,6 +432,8 @@ async def _run_once(
         if args.delivery_dir else None
     )
     extra_prompt = workspace_prompt(selected) if workspace else ""
+    if relations is not None:
+        extra_prompt += "\n\n" + SPEC_EVIDENCE_GUIDANCE
     if skills:
         extra_prompt += "\n\n" + skills_prompt(skills)
     if delivery is not None and delivery.implementation is not None:
@@ -430,7 +444,8 @@ async def _run_once(
     parent_inbox = Inbox()
     if args.subagents:
         child_tools = ToolRegistry()
-        for tool in rag_tools(client, default_product=args.product, default_version=args.version):
+        for tool in rag_tools(client, default_product=args.product, default_version=args.version,
+                              relations=relations, workspace=selected):
             child_tools.register(tool)
         if selected:
             for tool in workspace_tools(selected):
@@ -457,7 +472,8 @@ async def _run_once(
                     "State uncertainty and checks not performed; the parent integrates changes.\n"
                     "Leave a model response in the shared budget for the parent to report.\n"
                     f"Workspace: {selected}; product: {args.product}; version: {args.version}\n"
-                    + skills_prompt(skills),
+                    + skills_prompt(skills)
+                    + ("\n\n" + SPEC_EVIDENCE_GUIDANCE if relations is not None else ""),
                 )],
                 memory=facts, user_profile=profile, applies_to=applies_to,
                 compaction=(None if args.no_compaction else CompactionPolicy(
@@ -501,6 +517,11 @@ async def _run_once(
         # Old sessions retain their system prefix. Announce current skill availability
         # after other host guidance without injecting full instructions every turn.
         input_question += "\n\n" + skills_prompt(skills)
+    if relations is not None and history and not any(
+        SPEC_EVIDENCE_GUIDANCE in message.content for message in history
+    ):
+        # Existing sessions keep their cached system prefix; introduce the new tool at the tail.
+        input_question += "\n\n" + SPEC_EVIDENCE_GUIDANCE
     messages = _continuation(history, input_question, extra_prompt)
     context_anchor = (
         await session.load_context_anchor() if session is not None and history else None

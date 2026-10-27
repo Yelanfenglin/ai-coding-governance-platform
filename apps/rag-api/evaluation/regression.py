@@ -42,7 +42,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "regression_set_20261020"
-BANK = ROOT / "evaluation" / "spec_retrieval_v2_2"
+BANK = ROOT / "evaluation" / "retrieval"
 sys.path.insert(0, str(ROOT))
 
 from app.evidence_checks import Citation, detect_findings  # noqa: E402

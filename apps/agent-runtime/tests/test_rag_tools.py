@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app import cli
 from app.cli import build_parser
 from app.contracts import AssistantTurn, Message, ToolCall
@@ -143,7 +145,11 @@ async def test_excerpt_keeps_order_and_ids_and_full_evidence_can_be_read() -> No
     registry = ToolRegistry()
     for tool in rag_tools(RagClient(RagClientConfig("http://rag"), transport)):
         registry.register(tool)
-    excerpt = await registry.execute(ToolCall("find", "search_spec", {"question": "寄存器"}))
+    complete = await registry.execute(ToolCall("default", "search_spec", {"question": "寄存器"}))
+    assert "末尾关键字段=73" in complete.content and "[excerpt:" not in complete.content
+    excerpt = await registry.execute(ToolCall("find", "search_spec", {
+        "question": "寄存器", "max_chars": 900,
+    }))
     assert not excerpt.is_error and "[excerpt: 900/" in excerpt.content
     assert "末尾关键字段=73" not in excerpt.content
     assert excerpt.content.index(HIT["chunk_id"]) < excerpt.content.index("second-chunk")
@@ -308,6 +314,41 @@ def test_render_helpers_are_pure() -> None:
     )
     assert "PWM 模块" not in render_context(CONTEXT)  # section_title 是可选字段
     assert "section=10.0 PWM" in render_context(CONTEXT)
+
+
+async def test_search_spec_can_request_bounded_reranking_and_shows_fallback():
+    ranked = {**HIT, "rerank_score": 0.97}
+    transport, calls = recording_transport((200, [ranked]))
+    registry = ToolRegistry()
+    for tool in rag_tools(RagClient(RagClientConfig("http://rag"), transport)):
+        registry.register(tool)
+    result = await registry.execute(ToolCall("rank", "search_spec", {
+        "question": "PWM", "top_k": 3, "candidate_k": 20, "rerank": True,
+    }))
+    assert not result.is_error and "rerank_score=0.970" in result.content
+    assert calls[0]["params"]["top_k"] == 3
+    assert calls[0]["params"]["candidate_k"] == 20
+    assert calls[0]["params"]["rerank"] is True
+    assert "fallback" not in result.content
+    fallback = render_search_hits([HIT], rerank_requested=True)
+    assert "reranker unavailable" in fallback and HIT["chunk_id"] in fallback
+    assert "rerank" not in render_search_hits([HIT])
+
+
+@pytest.mark.parametrize("arguments", [
+    {"candidate_k": 30},
+    {"rerank": True, "top_k": 5, "candidate_k": 2},
+    {"rerank": True, "candidate_k": 51},
+])
+async def test_search_spec_rejects_invalid_candidate_budgets_before_http(arguments):
+    transport, calls = recording_transport((200, [HIT]))
+    registry = ToolRegistry()
+    for tool in rag_tools(RagClient(RagClientConfig("http://rag"), transport)):
+        registry.register(tool)
+    result = await registry.execute(ToolCall("invalid", "search_spec", {
+        "question": "PWM", **arguments,
+    }))
+    assert result.is_error and not calls
 
 
 def test_missing_httpx_is_an_error_not_a_crash() -> None:

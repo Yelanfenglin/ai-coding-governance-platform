@@ -16,6 +16,7 @@ import asyncio
 from collections.abc import Awaitable
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit
 
@@ -32,6 +33,7 @@ from .circuit import (
 )
 from .contracts import ToolResult
 from .observability import failure, observe
+from .spec_evidence import SpecEvidence, SpecRelationGraph
 from .tools import FunctionTool
 
 #: `GET /search` 的返回字段（`apps/rag-api/app/schemas.py::SearchHit`）。
@@ -87,6 +89,8 @@ class RagClient:
         version: str | None = None,
         kind: str | None = None,
         top_k: int = 8,
+        rerank: bool = False,
+        candidate_k: int | None = None,
     ) -> list[SearchHit]:
         params: dict[str, Any] = {"question": question, "top_k": top_k}
         if product:
@@ -95,6 +99,10 @@ class RagClient:
             params["version"] = version
         if kind:
             params["kind"] = kind
+        if rerank:
+            params["rerank"] = True
+        if candidate_k is not None:
+            params["candidate_k"] = candidate_k
         status, payload = await self._request(self.config.search_url, params)
         if status >= 400:
             raise RagError(f"search failed: {status} {_detail(payload)}")
@@ -208,14 +216,21 @@ def render_search_hit(hit: SearchHit, index: int = 1, *, max_chars: int = 0) -> 
     return "\n".join(lines)
 
 
-def render_search_hits(hits: list[SearchHit], *, max_chars: int = 0) -> str:
+def render_search_hits(
+    hits: list[SearchHit], *, max_chars: int = 0, rerank_requested: bool = False,
+) -> str:
     """把检索结果渲染成带引用的文本；没有命中时明确说没有。"""
     if not hits:
         return "no chunks matched; try a different question or relax product/version filters"
 
-    return "\n\n".join(
+    rendered = "\n\n".join(
         render_search_hit(hit, index, max_chars=max_chars) for index, hit in enumerate(hits, 1)
     )
+    if rerank_requested and any(hit.get("rerank_score") is None for hit in hits):
+        return (
+            "[reranker unavailable; retrieval-order fallback, not reranked evidence]\n" + rendered
+        )
+    return rendered
 
 
 def render_context(context: ChunkContext) -> str:
@@ -255,6 +270,8 @@ def _citation_line(hit: dict[str, Any]) -> str:
     score = hit.get("score")
     if score is not None:
         parts.append(f"score={float(score):.3f}")
+    if hit.get("rerank_score") is not None:
+        parts.append(f"rerank_score={float(hit['rerank_score']):.3f}")
     return " ".join(parts)
 
 
@@ -272,11 +289,20 @@ def search_spec_tool(
     *,
     default_product: str | None = None,
     default_version: str | None = None,
+    evidence: SpecEvidence | None = None,
 ) -> FunctionTool:
     async def execute(args: dict[str, Any], context: Any) -> ToolResult:
         question = str(args.get("question", "")).strip()
         if not question:
             return ToolResult(content="search_spec requires 'question'", is_error=True)
+        top_k = int(args.get("top_k", 8))
+        rerank = bool(args.get("rerank", False))
+        candidate_k = int(args["candidate_k"]) if "candidate_k" in args else None
+        if candidate_k is not None and (not rerank or candidate_k < top_k):
+            return ToolResult(
+                content="candidate_k requires rerank=true and must be at least top_k",
+                is_error=True,
+            )
         product = str(args.get("product") or default_product or "") or None
         version = str(args.get("version") or "") or None
         if version is None and product == default_product:
@@ -287,20 +313,30 @@ def search_spec_tool(
                 product=product,
                 version=version,
                 kind=str(args.get("kind") or "") or None,
-                top_k=int(args.get("top_k", 8)),  # type: ignore[arg-type]
+                top_k=top_k, rerank=rerank, candidate_k=candidate_k,
             )
         except RagError as error:
             return ToolResult(content=f"search_spec failed: {error}", is_error=True)
+        max_chars = int(args.get("max_chars", 0))
+        if evidence is not None:
+            for hit in hits:
+                text = str(hit.get("text", "")).strip()
+                evidence.record(hit, text[:max_chars] if max_chars else text)
         return ToolResult(content=render_search_hits(
-            hits, max_chars=int(args.get("max_chars", 900)),
+            hits, max_chars=max_chars, rerank_requested=rerank,
         ))
 
     return FunctionTool(
         name="search_spec",
         description=(
             "Locate specification evidence for a concrete missing fact or register. Returns "
-            "cited excerpts (default 900 chars per hit); use read_context for selected full chunks "
-            "instead of repeating broad searches. Citation IDs and hit order are preserved. "
+            "complete cited chunk text by default. Set max_chars explicitly only when excerpts "
+            "are wanted; read_context expands selected original contexts without searching again. "
+            "Citation IDs and hit order are preserved. "
+            "For competing results, optionally set rerank=true to rank a wider candidate pool "
+            "before returning top_k excerpts (default pool: max(top_k,30), within server limits). "
+            "This adds "
+            "a reranker request and requires server support; do not enable for every lookup. "
             f"Default scope: product={default_product!r}, version={default_version!r}. "
             "Overriding product does not inherit the old product's version; specify both "
             "product and version for a version-specific cross-product comparison."
@@ -312,9 +348,12 @@ def search_spec_tool(
                 "product": {"type": "string"},
                 "version": {"type": "string"},
                 "kind": {"type": "string"},
-                "top_k": {"type": "integer"},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
+                "rerank": {"type": "boolean"},
+                "candidate_k": {"type": "integer", "minimum": 1, "maximum": 50,
+                                "description": "Recall pool for rerank; must be >= top_k"},
                 "max_chars": {"type": "integer", "minimum": 0, "maximum": 8000,
-                              "description": "Excerpt chars per hit; 0 returns full text"},
+                              "description": "Excerpt chars per hit; default 0 returns full text"},
             },
             "required": ["question"],
         },
@@ -323,7 +362,7 @@ def search_spec_tool(
     )
 
 
-def read_context_tool(client: RagClient) -> FunctionTool:
+def read_context_tool(client: RagClient, *, evidence: SpecEvidence | None = None) -> FunctionTool:
     async def execute(args: dict[str, Any], context: Any) -> ToolResult:
         document_id = str(args.get("document_id", "")).strip()
         chunk_id = str(args.get("chunk_id", "")).strip()
@@ -335,7 +374,10 @@ def read_context_tool(client: RagClient) -> FunctionTool:
             payload = await client.context(document_id, chunk_id)
         except RagError as error:
             return ToolResult(content=f"read_context failed: {error}", is_error=True)
-        return ToolResult(content=render_context(payload))
+        rendered = render_context(payload)
+        if evidence is not None:
+            evidence.record(payload, rendered.partition("\n")[2])
+        return ToolResult(content=rendered)
 
     return FunctionTool(
         name="read_context",
@@ -362,11 +404,31 @@ def rag_tools(
     *,
     default_product: str | None = None,
     default_version: str | None = None,
+    relations: SpecRelationGraph | None = None,
+    workspace: Path | None = None,
 ) -> list[FunctionTool]:
-    """一套 RAG 工具：`search_spec` + `read_context`。"""
-    return [
+    """RAG tools; the optional graph/checklist observes this agent's own evidence."""
+    evidence = SpecEvidence(relations) if relations is not None else None
+    tools = [
         search_spec_tool(
-            client, default_product=default_product, default_version=default_version
+            client, default_product=default_product, default_version=default_version,
+            evidence=evidence,
         ),
-        read_context_tool(client),
+        read_context_tool(client, evidence=evidence),
     ]
+    if evidence is not None:
+        async def read_source(document_id: str, chunk_id: str):
+            payload = await client.context(document_id, chunk_id)
+            return payload, render_context(payload).partition("\n")[2]
+
+        source_reader = None
+        if workspace is not None:
+            from .register_facts import read_register_facts
+
+            async def source_reader(path, function, graph):
+                return await asyncio.to_thread(
+                    read_register_facts, workspace, path, function, graph.fields,
+                )
+
+        tools.append(evidence.tool(read_source, source_reader))
+    return tools

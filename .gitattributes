@@ -1,3 +1,3 @@
 # Frozen banks include byte-level SHA-256 manifests; preserve their recorded bytes.
 apps/rag-api/evaluation/spec_retrieval_v2_1/** -text
-apps/rag-api/evaluation/spec_retrieval_v2_2/** -text
+apps/rag-api/evaluation/retrieval/** -text

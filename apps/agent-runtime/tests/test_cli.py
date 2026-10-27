@@ -143,6 +143,65 @@ async def test_cli_resumes_the_session_history(tmp_path: Path, capsys) -> None:
     assert printed["answer"] == "second answer", "只取本轮答案，不拿上一轮充数"
 
 
+async def test_optional_graph_guidance_reaches_new_and_existing_sessions(tmp_path, capsys):
+    from app.spec_evidence import SPEC_EVIDENCE_GUIDANCE
+
+    graph = Path(__file__).resolve().parents[1] / "examples/spec-relations.example.json"
+    session = tmp_path / "existing.jsonl"
+    first = RecordingProvider("first")
+    await _run(first, "--session", str(session), "--no-memory")
+    capsys.readouterr()
+    original_head = first.requests[0].messages[0].content
+    second = RecordingProvider("graph enabled")
+    await _run(second, "--session", str(session), "--no-memory", "--spec-relations", str(graph))
+    capsys.readouterr()
+    request = second.requests[0]
+    assert request.messages[0].content == original_head
+    assert SPEC_EVIDENCE_GUIDANCE in request.messages[-1].content
+    assert "inspect_spec_evidence" in {tool.name for tool in request.tools}
+    third = RecordingProvider("continued")
+    await _run(third, "--session", str(session), "--no-memory", "--spec-relations", str(graph))
+    capsys.readouterr()
+    assert sum(SPEC_EVIDENCE_GUIDANCE in m.content for m in third.requests[0].messages) == 1
+    fresh = RecordingProvider("fresh")
+    await _run(fresh, "--session", str(tmp_path / "new.jsonl"), "--no-memory",
+               "--spec-relations", str(graph))
+    capsys.readouterr()
+    assert SPEC_EVIDENCE_GUIDANCE in fresh.requests[0].messages[0].content
+
+
+async def test_graph_source_inspection_uses_the_cli_selected_workspace(tmp_path, capsys):
+    graph = Path(__file__).resolve().parents[1] / "examples/spec-relations.example.json"
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src/init.c").write_text(
+        "void init(void) {\n CTRL=0;\n DIR=4;\n}\n", encoding="utf-8",
+    )
+
+    class SourceProvider(RecordingProvider):
+        async def generate(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return AssistantTurn(Message("assistant", tool_calls=[ToolCall(
+                    "inspect", "inspect_spec_evidence", {
+                        "product": "EXAMPLE_CHIP", "version": "V1.0", "entity": "pin_interrupt",
+                        "facts": {"input_mode": "digital"},
+                        "source": {"path": "src/init.c", "function": "init"},
+                    },
+                )]), "tool_calls")
+            return AssistantTurn(Message("assistant", "reviewed"), "stop")
+
+    provider = SourceProvider("")
+    assert await _run(provider, "--workspace", str(project), "--no-memory",
+                      "--spec-relations", str(graph)) == 0
+    capsys.readouterr()
+    message = next(m for m in provider.requests[-1].messages if m.role == "tool")
+    report = json.loads(message.content)
+    assert report["source_analysis"]["path"] == "src/init.c"
+    assert report["source_analysis"]["facts"]["CTRL.EN"] == 0
+    assert report["configuration_status"] == "unsatisfied"
+
+
 async def test_cli_no_history_flag_pins_the_append_only_behaviour(tmp_path: Path, capsys) -> None:
     path = tmp_path / "session.jsonl"
     await _run(RecordingProvider("first answer"), "--session", str(path))

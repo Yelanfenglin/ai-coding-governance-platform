@@ -23,7 +23,7 @@ class SelectionPipeline:
         return getattr(self._host, name)
 
     async def select_for_generation(
-        self, plan: RetrievalPlan, hits: Sequence[SearchHit]
+        self, plan: RetrievalPlan, hits: Sequence[SearchHit], *, top_n: int | None = None,
     ) -> tuple[list[SearchHit], bool]:
         from ..rag_service import (  # local import: rag_service imports this module
             RerankInput,
@@ -31,7 +31,8 @@ class SelectionPipeline:
             _setting,
         )
 
-        top_n = max(1, int(_setting(self._settings, "context_top_n", 4)))
+        if top_n is None:
+            top_n = max(1, int(_setting(self._settings, "context_top_n", 4)))
         reranker_enabled = bool(
             _setting(self._settings, "reranker_enabled", self._reranker is not None)
         )

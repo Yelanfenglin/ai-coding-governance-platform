@@ -1,6 +1,6 @@
 """Verbatim DSH goal-round-driver/prompt.ts and tool-goal/wrapup.ts text.
 
-Copyright (c) 2026 DeepSeek. MIT; see THIRD_PARTY_NOTICES.md.
+Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
 Source commit aa8262ec091698bae9a6b04773a6b5b06ad4aef2.
 """
 

@@ -1,6 +1,6 @@
 """DSH goal-round-driver scheduling adapted to the single live Python run.
 
-Copyright (c) 2026 DeepSeek. MIT; see THIRD_PARTY_NOTICES.md.
+Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
 Source commit aa8262ec091698bae9a6b04773a6b5b06ad4aef2.
 Round reservation/admission, revision fences, idle-only continuation and stop
 semantics are retained. CLI has no Cordis plugin registry or UI/RPC lifecycle.

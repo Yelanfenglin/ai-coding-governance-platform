@@ -256,11 +256,31 @@ class RagQueryService:
             "rag.version": request.version or "",
         }) as span:
             self._validate_top_k(request.top_k)
-            hits = await self._retrieve(request)
+            retrieval_request = request
+            if request.rerank:
+                if self._reranker is None or not bool(
+                    _setting(self._settings, "reranker_enabled", True)
+                ):
+                    raise RagValidationError("search reranking is not configured")
+                candidate_k = request.candidate_k or max(request.top_k, min(30, self.max_top_k))
+                self._validate_top_k(candidate_k)
+                retrieval_request = request.model_copy(update={"top_k": candidate_k})
+            hits = await self._retrieve(retrieval_request)
+            rerank_degraded = False
+            if request.rerank and hits:
+                hits, rerank_degraded = await self._selection_pipeline.select_for_generation(
+                    build_plan(request.question, request.product, request.version),
+                    hits, top_n=request.top_k,
+                )
+                if rerank_degraded:
+                    metrics.DEGRADED.labels("reranker").inc()
             metrics.HITS.observe(len(hits))
             if getattr(self, "_bm25_degraded", False):
                 metrics.DEGRADED.labels("bm25").inc()
             span.set_attributes({"rag.hit_count": len(hits),
+                                 "rag.candidate_top_k": retrieval_request.top_k,
+                                 "rag.rerank_requested": request.rerank,
+                                 "rag.rerank_degraded": rerank_degraded,
                                  "rag.bm25_degraded": bool(getattr(self, "_bm25_degraded", False))})
             for index, hit in enumerate(hits):
                 span.set_attribute(f"retrieval.documents.{index}.document.id", str(hit.chunk_id))

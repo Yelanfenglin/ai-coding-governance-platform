@@ -44,6 +44,8 @@ def search_params(
     version: Annotated[str | None, Query()] = None,
     kind: Annotated[str | None, Query()] = None,
     top_k: Annotated[int, Query(ge=1, le=50)] = 8,
+    rerank: Annotated[bool, Query()] = False,
+    candidate_k: Annotated[int | None, Query(ge=1, le=50)] = None,
 ) -> SearchParams:
     """Build the model explicitly so validator failures remain HTTP 422."""
 
@@ -54,6 +56,8 @@ def search_params(
             version=version,
             kind=kind,
             top_k=top_k,
+            rerank=rerank,
+            candidate_k=candidate_k,
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc

@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BANK = ROOT / "evaluation" / "spec_retrieval_v2_2"
+BANK = ROOT / "evaluation" / "retrieval"
 REGRESSION = ROOT / "evaluation" / "regression.py"
 SCORER = BANK / "score_results.py"
 VALIDATOR = BANK / "validate_bank.py"

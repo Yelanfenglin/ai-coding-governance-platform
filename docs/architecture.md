@@ -1,52 +1,60 @@
-# 架构设计
+# 系统原理
 
-系统由工程工作台、Agent Runtime 和规格书 RAG 组成。工程与执行留在本地，规格库通过独立 HTTP 服务提供检索能力。
+[首页](../README.md) · [运行](development.md) · [监控](observability.md)
 
-## 一次工程任务
+## 系统边界
 
-1. 用户在工作台提交需求；本地服务加载当前工程、会话、项目记忆与工具定义。
-2. Runtime 向模型发送上下文，接收文本、推理字段及工具调用，执行并返回真实结果。
-3. 模型按结果继续检索、计算或修改；独立检查的失败信息也通过工具返回，供下一步修复。
-4. 模型结束后，宿主检查最终版本，保存文件快照、diff、检查输出与实现依据，再发出 `TaskFinished`。
+![系统架构](images/architecture.svg)
 
-`app/web.py` 调用 `app/cli.py::run_once`，执行统一进入 `app/loop.py::run_agent`。Web 适配层管理会话、任务与事件重放，模型和工具调度保留在 Runtime。
+工程文件、命令和会话留在本机。Runtime 通过 HTTP 调用规格检索服务，通过模型接口接收文本和工具调用；Web 与 CLI 共用执行循环。
 
-## Agent Runtime
+## 证据怎样进入 Agent
 
-`contracts.py` 定义消息、工具调用、工具结果与事件；`providers/openai_compatible.py` 处理模型请求和 SSE；`tools.py` 负责注册及参数校验。
+![规格检索与按需补查](images/retrieval.svg)
 
-每个 step 执行一次模型请求。模型返回工具调用时，执行器按 parallel/exclusive 策略调度，并按调用顺序提交结果。取消会收拢已启动任务，保留实际完成的结果；重试由错误类别和策略控制。步数、墙钟预算可选，剩余预算进入模型上下文，耗尽与用户取消分别记录。
+普通检索按型号与版本召回证据，再展开原文。可选规格约束图把芯片依赖、已知配置和源码命名写入关联起来，只补读缺失的依据。
 
-子 Agent 作为工具接入同一个运行时。模型可选择 spawn/fork、前台/后台和是否保留持续会话；通过等待、消息和中断工具协调。父子共享任务预算和用量，当前 CLI 配置向子 Agent 提供只读研究与审阅工具。
+<details>
+<summary>规格约束图的输入、状态与适用范围</summary>
 
-## 上下文与记忆
+启用参数：`--spec-relations <关系文件.json>` 或 `SPEC_RELATIONS_PATH`。[关系文件示例](../apps/agent-runtime/examples/spec-relations.example.json)使用虚构芯片与来源。
 
-- **活动上下文**：会话消息持久化为事件日志；压缩按工具调用与结果分组，滚动合并旧摘要，保留尾部消息并重测压力。恢复会话时应用压缩检查点。
-- **项目事实与用户偏好**：两个有界事实库，分别设置容量。已确认事实带来源与适用范围；纠正时更新或失效旧值。
-- **历史检索**：SQLite FTS5 索引会话，中文子串零命中时回退匹配。历史按需检索，不整体注入。
+| 输入或状态 | 含义 |
+|---|---|
+| `facts` | 已知配置或模式 |
+| `source={path,function}` | 宿主读取所选 C 函数的命名写入，保留文件、行号和语句 |
+| `ready` | 所选关系的引文已取全，且无未知条件或展开边界 |
+| `configuration_status` | 配置满足、不满足或未知，与证据取全分别判断 |
 
-记忆在每轮请求装配时形成快照，不混入原始会话日志。默认状态目录归属所选工程，型号或版本不适用的事实不注入。上下文窗口由模型配置决定，默认 1,000,000 tokens；压缩使用真实 usage 锚点与当前请求估算共同计量。
+关系按型号、版本和适用条件展开。未解析的分支、调用、间接写入与未知位保留未知；不猜复位值。图内核查范围与实机验证分别报告。
 
-## 规格书 RAG
+未加载关系文件时，沿用 `search_spec/read_context`；它们默认返回命中原文与来源，显式 `max_chars` 才截取。重排由配置或调用参数启用，缺失依据由现有 Agent 循环补查。
 
-离线：PDF → 版面区域与原生文字/图元 → 正文、表格、图片及章节结构 → 语义分块 → PostgreSQL 与 Milvus。
+</details>
 
-在线：问题与型号/版本 → 向量召回与可选 BM25 → RRF 融合 → 可选重排 → 证据选择与上下文展开。检索参数由 RAG settings 控制。
+## 检查反馈与交付
 
-`search_spec` 返回可定位摘要，包含 document/chunk、产品、版本、页码和章节；`read_context` 展开选定原文。Agent 调用这两个 HTTP 工具，RAG 内部不另开 Agent loop。
+![检查、交付与撤回](images/workflow.svg)
 
-## 工程交付
+- **开发中**：模型调用检查工具，读取真实诊断后继续修改。
+- **交付时**：宿主复验最终文件，保存 diff、依据和检查状态，再结束任务。
+- **撤回时**：先核对全部受影响文件；存在后续冲突就整轮拒绝，原验收记录保留。
 
-`delivery.py` 从宿主文件快照和实际工具事件生成交付记录。命令记录包含执行前后版本，只有对应最终交付的结果才显示为版本一致。
+ADC 序列检查比较源、目标 C 模块的 API 行为，缩减失败序列并保存重放输入。它补充固定检查，有限搜索与主机执行范围单独记录。
 
-新交付为实际变更文件保存修改前的原始字节。`undo.py` 在撤回前检查全部变更文件仍与交付版本一致，再恢复修改和删除的文件、移除新增文件；其他文件保留。撤回结果单独记录，原任务与验收结果不改写。Web 侧任务、复验与撤回共用工程互斥状态。
+<details>
+<summary>运行时和源码入口</summary>
 
-`record_implementation` 将模型整理的需求、理由关联到实际源码、已返回的规格片段和检查调用。宿主核对定位和版本，工作台保留未关联文件与完整 diff。说明中的技术推导由工程师结合原文审阅，定位成功不替代语义判断。
+| 机制 | 源码 |
+|---|---|
+| 装配与运行循环 | [cli.py](../apps/agent-runtime/app/cli.py)、[loop.py](../apps/agent-runtime/app/loop.py) |
+| C 定义与引用定位 | [source_symbols.py](../apps/agent-runtime/app/source_symbols.py) |
+| 规格取证与约束核查 | [rag_tools.py](../apps/agent-runtime/app/rag_tools.py)、[spec_evidence.py](../apps/agent-runtime/app/spec_evidence.py) |
+| 独立检查与交付 | [project_verification.py](../apps/agent-runtime/app/project_verification.py)、[delivery.py](../apps/agent-runtime/app/delivery.py)、[undo.py](../apps/agent-runtime/app/undo.py) |
+| ADC 反例生成与重放 | [adc_sequences.py](../apps/agent-runtime/evaluation/checks/adc_sequences.py) |
 
-`project_verification.py` 加载宿主提供的固定检查命令；开发中供模型调用，交付时对最终版本再运行。未配置、未完成、通过和失败分别记录。检查器来自工程维护者，固件主机测试、厂商编译和硬件验证各自报告。
+工具按可并行与独占模式调度。会话事件、项目事实和用户偏好分别持久化，历史通过 FTS5 按需检索；压缩保持工具调用与结果配对。
 
-## 部署
+模型瞬时故障有限重试，已输出正文和已执行工具不自动重放。熔断状态在进程内共享，服务重启后的任务续接与运行中透明恢复分别处理。
 
-Vue 开发服务通过代理连接本机 Agent；构建后的静态页面可由同一 FastAPI 服务提供。服务绑定 `127.0.0.1` 并校验浏览器来源，工程目录、凭据和验收配置由本机启动参数决定。
-
-工作区工具以用户权限运行；项目当前部署形态是本地单用户工作台。数据库与向量库由 RAG 独立管理，模型、规格数据和运行缓存通过配置接入。
+</details>

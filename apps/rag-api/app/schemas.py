@@ -174,6 +174,17 @@ class QueryRequest(_QuestionScopeModel):
 
 class SearchParams(_QuestionScopeModel):
     kind: KnowledgeChunkKind | None = None
+    rerank: bool = False
+    candidate_k: Annotated[int | None, Field(ge=1, le=TOP_K_PROTOCOL_MAX)] = None
+
+    @model_validator(mode="after")
+    def valid_candidate_budget(self) -> SearchParams:
+        if self.candidate_k is not None:
+            if not self.rerank:
+                raise ValueError("candidate_k requires rerank=true")
+            if self.candidate_k < self.top_k:
+                raise ValueError("candidate_k must be greater than or equal to top_k")
+        return self
 
 
 class SearchHit(_ResponseModel):

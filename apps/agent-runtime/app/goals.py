@@ -1,6 +1,6 @@
 """DSH goal/src/{fold,index}.ts, aa8262ec: same-session goal state.
 
-Copyright (c) 2026 DeepSeek. MIT; see THIRD_PARTY_NOTICES.md.
+Copyright (c) 2026 DeepSeek. MIT; see repository LICENSE.
 The Python host awaits its session sink; state changes commit only after append.
 Cordis/RPC/UI integration is not part of this single-agent CLI adapter.
 """
