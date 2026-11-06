@@ -29,6 +29,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import cli, metrics
 from .circuit import from_env as circuit_from_env
 from .observability import configure
+from .recovery import report_interrupted
+from .request_context import install_request_id
 from .reverification import recheck_delivery, recheck_summary
 from .skills import load_skills
 from .undo import undo_delivery, undo_summary
@@ -184,6 +186,10 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         metrics.configure_logging(os.getenv("MONITORING_LOG_PATH"))
+        # 崩溃遗留的会话只登记、不自动重放：中断轮可能已产生文件或命令副作用。
+        _app.state.interrupted_sessions = await report_interrupted(
+            agent.root / "conversations"
+        )
         telemetry = configure()
         try:
             yield
@@ -211,21 +217,34 @@ def create_app(options: argparse.Namespace, *, ui_directory: Path | None = None)
         host = request.headers.get("host", "")
         origin = request.headers.get("origin")
         hostname = urlsplit(f"http://{host}").hostname
+        # Docker 内其它服务（如 Prometheus 抓取）通过服务名访问时需显式放行。
+        allowed = {"127.0.0.1", "localhost", "::1"} | {
+            item.strip()
+            for item in os.getenv("AGENT_ALLOWED_HOSTS", "").split(",")
+            if item.strip()
+        }
         # Docker's Prometheus uses this host name. The exception exposes only
         # aggregate GET metrics, never the task/file APIs or browser cross-origin access.
         scrape = (request.method == "GET" and request.url.path == "/metrics"
                   and hostname == "host.docker.internal" and origin is None)
-        if ((hostname not in {"127.0.0.1", "localhost", "::1"} and not scrape)
+        if ((hostname not in allowed and not scrape)
                 or (origin and urlsplit(origin).netloc != host)):
             return JSONResponse({"detail": "只接受本机同源访问"}, status_code=403)
         return await call_next(request)
+
+    # 最后注册 => 最外层中间件：被上面拒绝的请求也会带上 X-Request-ID。
+    install_request_id(app)
 
     api = APIRouter(prefix=API_PREFIX)
 
     @api.get("/health")
     async def health():
         job = agent.active
-        return {"ready": True, "service": "embedded-agent", "active_task": (
+        return {"ready": True, "service": "embedded-agent",
+                "interrupted_sessions": len(
+                    getattr(app.state, "interrupted_sessions", None) or []
+                ),
+                "active_task": (
             {"id": job.record["id"], "status": job.record["status"],
              "started_at": job.record.get("started_at"),
              "last_event_at": job.events[-1].get("observed_at") if job.events else None,
@@ -400,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.description = "Serve the local Agent and existing Vue workspace (no Codex process)."
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--host", default="127.0.0.1")
     options = parser.parse_args(argv)
     if not (options.workspace or options.demo_project or options.firmware_project):
         options.workspace = os.environ.get("AGENT_WORKSPACE")
@@ -408,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
         app = create_app(options, ui_directory=directory if directory.is_dir() else None)
     except ValueError as exc:
         parser.error(str(exc))
-    uvicorn.run(app, host="127.0.0.1", port=options.port)
+    uvicorn.run(app, host=options.host, port=options.port)
     return 0
 
 

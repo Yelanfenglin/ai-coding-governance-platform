@@ -1,0 +1,88 @@
+name: embedded-ai-coding
+
+# 一条命令拉起整套系统：
+#   POSTGRES_PASSWORD=... docker compose up -d --build
+#
+# 服务：
+#   postgres        —— 规格库（本栈独有，端口 5433，避开本机 5432 的 PG18）
+#   rag-api         —— 规格检索与入库，启动前自动 alembic upgrade head
+#   agent-runtime   —— Agent 运行时 + Web 工作台
+#
+# 依赖复用本机已有实例，不重复起：
+#   Milvus          —— 容器 rag-milvus，已挂在 rag-milvus-net 上
+#   Prometheus/Grafana/Loki/Phoenix —— 见 infra/monitoring 与 infra/observability
+
+services:
+  postgres:
+    # 使用本机已有镜像，避免离线环境重新拉取。
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 或环境变量里设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: rag_kb
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag_kb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rag-api:
+    build: ./apps/rag-api
+    restart: unless-stopped
+    # 复用本地已有的供应商密钥；下面 environment 里的同名项会覆盖它。
+    env_file:
+      - ./apps/rag-api/.env
+    environment:
+      RAG_DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag_kb
+      RAG_MILVUS_URI: http://rag-milvus:19530
+      RAG_MILVUS_COLLECTION: ${RAG_MILVUS_COLLECTION:-rag_specs}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-dashscope}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-v3}
+      RAG_EMBEDDING_DIMENSION: ${RAG_EMBEDDING_DIMENSION:-1024}
+      RAG_DASHSCOPE_BASE_URL: ${RAG_DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com}
+    command:
+      - sh
+      - -c
+      - "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - default
+      - rag-milvus
+
+  agent-runtime:
+    build: ./apps/agent-runtime
+    restart: unless-stopped
+    environment:
+      AGENT_WORKSPACE: /workspace
+      AGENT_ALLOWED_HOSTS: agent-runtime,host.docker.internal
+      RAG_API_BASE_URL: http://rag-api:8080
+      MONITORING_LOG_PATH: /workspace/logs/agent-runtime.jsonl
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
+      OPENAI_API_KEY: ${DEEPSEEK_API_KEY:-sk-local-demo-placeholder}
+      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-flash}
+    volumes:
+      - agent-workspace:/workspace
+    depends_on:
+      - rag-api
+    ports:
+      - "127.0.0.1:8081:8081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pg-data:
+  agent-workspace:
+
+networks:
+  rag-milvus:
+    external: true
+    name: rag-milvus-net

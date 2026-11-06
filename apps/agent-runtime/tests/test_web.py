@@ -85,7 +85,12 @@ async def test_health_exposes_activity_without_invoking_the_model(connected, mon
     monkeypatch.setattr(cli, "OpenAiCompatibleProvider", unexpected)
     response = await client.get(f"{API_PREFIX}/health")
     assert response.status_code == 200
-    assert response.json() == {"ready": True, "service": "embedded-agent", "active_task": None}
+    assert response.json() == {
+        "ready": True,
+        "service": "embedded-agent",
+        "interrupted_sessions": 0,
+        "active_task": None,
+    }
 
 
 async def test_http_task_edits_real_files_resumes_memory_and_exposes_delivery(

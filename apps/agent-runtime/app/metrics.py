@@ -19,6 +19,8 @@ from pathlib import Path
 from opentelemetry import trace
 from prometheus_client import Counter, Gauge, Histogram
 
+from .request_context import current_request_id
+
 TASKS = Counter("agent_tasks", "Finished tasks, with independent delivery check status.",
                 ["status", "verification"])
 TASK_SECONDS = Histogram("agent_task_duration_seconds", "Full task and delivery check duration.",
@@ -80,7 +82,8 @@ def log(event: str, **fields) -> None:
     context = trace.get_current_span().get_span_context()
     logger.info(json.dumps({
         "timestamp": time.time(), "service": "embedded-agent", "event": event,
-        "trace_id": f"{context.trace_id:032x}" if context.is_valid else None, **fields,
+        "trace_id": f"{context.trace_id:032x}" if context.is_valid else None,
+        "request_id": current_request_id() or None, **fields,
     }, ensure_ascii=False))
 
 
