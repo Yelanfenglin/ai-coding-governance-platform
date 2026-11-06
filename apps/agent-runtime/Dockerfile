@@ -20,6 +20,6 @@ ENV AGENT_WORKSPACE=/workspace \
 EXPOSE 8081
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
-    CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8081/api/agent/health',timeout=3)"
+    CMD python -c "import json,sys,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8081/api/agent/health',timeout=3)); sys.exit(0 if d.get('ready') else 1)"
 
 CMD ["agent-web", "--host", "0.0.0.0", "--port", "8081"]
